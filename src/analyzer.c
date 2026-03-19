@@ -237,7 +237,7 @@ sage_analyze_unused_indexes(void)
 
             sage_upsert_finding(
                 "unused_index",
-                size_bytes > 104857600 ? "high" : "medium",  /* >100MB = high */
+                size_bytes > 104857600 ? "critical" : "warning",  /* >100MB = critical */
                 "index",
                 object_id.data,
                 title_buf.data,
@@ -522,7 +522,7 @@ sage_analyze_duplicate_indexes(void)
                         indexes[j].schemaname, indexes[j].indexname);
                     appendStringInfo(&rollback_buf, "%s", indexes[j].indexdef);
 
-                    sage_upsert_finding("duplicate_index", "medium",
+                    sage_upsert_finding("duplicate_index", "warning",
                                         "index", object_id.data,
                                         title_buf.data, detail.data,
                                         rec.data, drop_sql.data,
@@ -581,7 +581,7 @@ sage_analyze_duplicate_indexes(void)
                     indexes[j].schemaname, indexes[j].indexname);
                 appendStringInfo(&rollback_buf, "%s;", indexes[j].indexdef);
 
-                sage_upsert_finding("duplicate_index", "high",
+                sage_upsert_finding("duplicate_index", "critical",
                                     "index", object_id.data,
                                     title_buf.data, detail.data,
                                     rec.data, drop_sql.data,
@@ -639,7 +639,7 @@ sage_analyze_duplicate_indexes(void)
                     indexes[i].schemaname, indexes[i].indexname);
                 appendStringInfo(&rollback_buf, "%s;", indexes[i].indexdef);
 
-                sage_upsert_finding("duplicate_index", "medium",
+                sage_upsert_finding("duplicate_index", "warning",
                                     "index", object_id.data,
                                     title_buf.data, detail.data,
                                     rec.data, drop_sql.data,
@@ -845,7 +845,7 @@ sage_analyze_missing_indexes(void)
                     queries[j].mean_exec_time, queries[j].calls);
 
                 sage_upsert_finding("missing_index",
-                    queries[j].mean_exec_time > 5000 ? "high" : "medium",
+                    queries[j].mean_exec_time > 5000 ? "critical" : "warning",
                     "table", object_id.data,
                     title_buf.data, detail.data,
                     rec.data, NULL, NULL);
@@ -958,11 +958,11 @@ sage_analyze_slow_queries(void)
             }
 
             if (mean_exec_time > 10000)
-                severity = "high";
+                severity = "critical";
             else if (mean_exec_time > 5000)
-                severity = "medium";
+                severity = "warning";
             else
-                severity = "low";
+                severity = "info";
 
             appendStringInfo(&rec,
                 "Query (id " INT64_FORMAT ") averages %.0f ms over "
@@ -1082,11 +1082,11 @@ sage_analyze_query_regressions(void)
             }
 
             if (pct_change > 500.0)
-                severity = "high";
+                severity = "critical";
             else if (pct_change > 200.0)
-                severity = "medium";
+                severity = "warning";
             else
-                severity = "low";
+                severity = "info";
 
             appendStringInfo(&rec,
                 "Query (id " INT64_FORMAT ") has regressed by %.0f%% "
@@ -1192,7 +1192,7 @@ sage_analyze_seq_scans(void)
                 seq_scan, idx_scan, ratio);
 
             sage_upsert_finding("seq_scan_heavy",
-                ratio > 100.0 ? "high" : "medium",
+                ratio > 100.0 ? "critical" : "warning",
                 "table", object_id.data,
                 title_buf.data, detail.data,
                 rec.data, NULL, NULL);
@@ -1233,7 +1233,11 @@ sage_analyze_sequence_exhaustion(void)
 
     if (ret == SPI_OK_SELECT && SPI_processed > 0)
     {
-        for (i = 0; i < (int) SPI_processed; i++)
+        /* Save the outer result set — inner queries overwrite SPI_tuptable */
+        SPITupleTable  *outer_tuptable = SPI_tuptable;
+        uint64          outer_processed = SPI_processed;
+
+        for (i = 0; i < (int) outer_processed; i++)
         {
             char   *schemaname   = pstrdup(sage_spi_getval_str(i, 0));
             char   *sequencename = pstrdup(sage_spi_getval_str(i, 1));
@@ -1294,7 +1298,12 @@ sage_analyze_sequence_exhaustion(void)
                                                   (365.25 * 86400);
 
                         if (years_to_exhaust > 1.0)
+                        {
+                            /* Restore outer result set before continuing loop */
+                            SPI_tuptable = outer_tuptable;
+                            SPI_processed = outer_processed;
                             continue;  /* Not urgent for bigint */
+                        }
 
                         /* Will exhaust within a year — fall through */
                     }
@@ -1302,21 +1311,33 @@ sage_analyze_sequence_exhaustion(void)
                     {
                         /* No measurable growth — skip */
                         if (pct_used < 75.0)
+                        {
+                            SPI_tuptable = outer_tuptable;
+                            SPI_processed = outer_processed;
                             continue;
+                        }
                     }
                 }
                 else
                 {
                     if (pct_used < 75.0)
+                    {
+                        SPI_tuptable = outer_tuptable;
+                        SPI_processed = outer_processed;
                         continue;
+                    }
                 }
+
+                /* Restore outer result set after inner query */
+                SPI_tuptable = outer_tuptable;
+                SPI_processed = outer_processed;
             }
 
             /* Determine severity */
             if (pct_used >= 90.0)
                 severity = "critical";
             else if (pct_used >= 75.0)
-                severity = "high";
+                severity = "warning";
             else
                 continue;   /* Below threshold */
 
@@ -1543,7 +1564,7 @@ sage_analyze_config(void)
             "ALTER SYSTEM SET shared_buffers = '%dMB'; -- requires restart",
             (int)(recommended / 1048576));
 
-        sage_upsert_finding("config", "medium",
+        sage_upsert_finding("config", "warning",
                             "parameter", "shared_buffers",
                             "shared_buffers below recommended 25% of RAM",
                             detail.data, rec.data, rec_sql.data, NULL);
@@ -1583,7 +1604,7 @@ sage_analyze_config(void)
             "ALTER SYSTEM SET effective_cache_size = '%dMB';",
             (int)(recommended / 1048576));
 
-        sage_upsert_finding("config", "medium",
+        sage_upsert_finding("config", "warning",
                             "parameter", "effective_cache_size",
                             "effective_cache_size below recommended 50% of RAM",
                             detail.data, rec.data, rec_sql.data, NULL);
@@ -1617,7 +1638,7 @@ sage_analyze_config(void)
         appendStringInfo(&rec_sql,
             "ALTER SYSTEM SET work_mem = '8MB';");
 
-        sage_upsert_finding("config", "low",
+        sage_upsert_finding("config", "info",
                             "parameter", "work_mem",
                             "work_mem may be too low for analytical workloads",
                             detail.data, rec.data, rec_sql.data, NULL);
@@ -1652,7 +1673,7 @@ sage_analyze_config(void)
             "ALTER SYSTEM SET max_connections = %d; -- requires restart",
             peak_connections * 3 > 100 ? peak_connections * 3 : 100);
 
-        sage_upsert_finding("config", "low",
+        sage_upsert_finding("config", "info",
                             "parameter", "max_connections",
                             "max_connections significantly exceeds peak usage",
                             detail.data, rec.data, rec_sql.data, NULL);
@@ -1685,7 +1706,7 @@ sage_analyze_config(void)
         appendStringInfo(&rec_sql,
             "ALTER SYSTEM SET checkpoint_completion_target = 0.9;");
 
-        sage_upsert_finding("config", "medium",
+        sage_upsert_finding("config", "warning",
                             "parameter", "checkpoint_completion_target",
                             "checkpoint_completion_target below 0.9",
                             detail.data, rec.data, rec_sql.data, NULL);
@@ -1719,7 +1740,7 @@ sage_analyze_config(void)
         appendStringInfo(&rec_sql,
             "ALTER SYSTEM SET random_page_cost = 1.1;");
 
-        sage_upsert_finding("config", "medium",
+        sage_upsert_finding("config", "warning",
                             "parameter", "random_page_cost",
                             "random_page_cost at HDD default (4.0) — consider SSD tuning",
                             detail.data, rec.data, rec_sql.data, NULL);
@@ -1744,11 +1765,11 @@ sage_analyze_config(void)
             cache_hit_ratio);
 
         if (cache_hit_ratio < 90.0)
-            severity = "high";
+            severity = "critical";
         else if (cache_hit_ratio < 95.0)
-            severity = "medium";
+            severity = "warning";
         else
-            severity = "low";
+            severity = "info";
 
         appendStringInfo(&rec,
             "Database cache hit ratio is %.2f%% (target: >99%%). "
@@ -1848,11 +1869,11 @@ sage_analyze_index_bloat(void)
                 }
 
                 if (bloat_pct >= 80.0)
-                    severity = "high";
+                    severity = "critical";
                 else if (bloat_pct >= 50.0)
-                    severity = "medium";
+                    severity = "warning";
                 else
-                    severity = "low";
+                    severity = "info";
 
                 appendStringInfo(&rec,
                     "Index %s.%s on %s.%s has an estimated bloat of "
@@ -1983,7 +2004,7 @@ sage_analyze_index_write_penalty(void)
                     schemaname, indexrelname);
 
                 sage_upsert_finding("index_write_penalty",
-                    idx_scan == 0 ? "high" : "medium",
+                    idx_scan == 0 ? "critical" : "warning",
                     "index", object_id.data,
                     title_buf.data, detail.data,
                     rec.data, drop_sql.data,

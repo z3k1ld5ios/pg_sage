@@ -597,17 +597,11 @@ store_briefing:
 
     SPI_finish();
 
-    /* Free intermediate strings */
-    if (new_findings)
-        pfree(new_findings);
-    if (resolved)
-        pfree(resolved);
-    if (actions)
-        pfree(actions);
-    if (system_health)
-        pfree(system_health);
-    if (sage_health)
-        pfree(sage_health);
+    /*
+     * Do NOT pfree new_findings, resolved, actions, system_health, sage_health
+     * here — they were allocated in SPI memory context and already freed by
+     * SPI_finish() above.  Explicit pfree would be a double-free.
+     */
 
     pfree(data_buf.data);
 

@@ -234,12 +234,15 @@ classify_action_risk(const char *category, const char *severity,
         return SAGE_RISK_HIGH;
 
     /* SAFE actions */
-    if (strcmp(category, "unused_index") == 0 &&
+    if ((strcmp(category, "unused_index") == 0 ||
+         strcmp(category, "duplicate_index") == 0) &&
         strstr(sql, "DROP") != NULL)
         return SAGE_RISK_SAFE;
 
     if (strcmp(category, "vacuum") == 0 ||
-        strcmp(category, "autovacuum") == 0)
+        strcmp(category, "autovacuum") == 0 ||
+        strcmp(category, "vacuum_bloat_dead_tuples") == 0 ||
+        strcmp(category, "vacuum_staleness") == 0)
         return SAGE_RISK_SAFE;
 
     if (strcmp(category, "idle_session") == 0 ||

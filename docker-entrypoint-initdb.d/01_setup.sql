@@ -54,7 +54,7 @@ SELECT (random() * 9999 + 1)::int,
        (random() * 500)::numeric(10,2),
        CASE (i % 4) WHEN 0 THEN 'pending' WHEN 1 THEN 'shipped'
        WHEN 2 THEN 'delivered' ELSE 'cancelled' END,
-       now() - (random() * 90 || ' days')::interval
+       now() - make_interval(days => (random() * 90)::int)
 FROM generate_series(1, 100000) i;
 
 -- Create some intentionally bad indexes for detection
