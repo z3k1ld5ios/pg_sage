@@ -1,0 +1,6 @@
+comment = 'pg_sage - Autonomous PostgreSQL DBA Agent'
+default_version = '0.1.0'
+module_pathname = '$libdir/pg_sage'
+relocatable = false
+schema = sage
+superuser = true
