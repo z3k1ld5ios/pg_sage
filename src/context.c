@@ -361,7 +361,11 @@ sage_assemble_context_system(void)
             "  (SELECT setting::int FROM pg_settings WHERE name = 'max_connections') AS max_connections, "
             "  (SELECT round(100.0 * sum(blks_hit) / NULLIF(sum(blks_hit) + sum(blks_read), 0), 2) "
             "   FROM pg_stat_database WHERE datname = current_database()) AS cache_hit_ratio, "
+#if PG_VERSION_NUM >= 170000
             "  (SELECT num_timed + num_requested FROM pg_stat_checkpointer) AS total_checkpoints, "
+#else
+            "  (SELECT checkpoints_timed + checkpoints_req FROM pg_stat_bgwriter) AS total_checkpoints, "
+#endif
             "  pg_postmaster_start_time() AS uptime_since, "
             "  pg_database_size(current_database()) AS db_size_bytes");
         append_section(&ctx, "[SYSTEM_HEALTH]", section, budget);

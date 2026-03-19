@@ -456,8 +456,12 @@ sage_collect_system_stats(void)
         initStringInfo(&buf);
         appendStringInfoChar(&buf, '{');
 
-        /* --- pg_stat_bgwriter --- */
+        /* --- checkpoint/bgwriter stats --- */
+#if PG_VERSION_NUM >= 170000
+        ret = sage_spi_exec("SELECT * FROM pg_stat_checkpointer", 0);
+#else
         ret = sage_spi_exec("SELECT * FROM pg_stat_bgwriter", 0);
+#endif
         if (ret >= 0 && SPI_processed > 0)
         {
             TupleDesc tupdesc = SPI_tuptable->tupdesc;

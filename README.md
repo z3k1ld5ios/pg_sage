@@ -1,10 +1,14 @@
 # pg_sage
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![PostgreSQL 14+](https://img.shields.io/badge/PostgreSQL-14%2B-336791.svg)](https://www.postgresql.org/)
+[![Works without LLM](https://img.shields.io/badge/LLM-optional-green.svg)](#tier-2----llm-enhanced-analysis)
 
-**Autonomous PostgreSQL DBA Agent** -- a native C extension that continuously monitors, analyzes, and maintains your PostgreSQL 17 database.
+**Autonomous PostgreSQL DBA Agent** -- a native C extension that continuously monitors, analyzes, and maintains your PostgreSQL database.
 
 pg_sage runs inside PostgreSQL as three background workers and exposes its capabilities through SQL functions in the `sage` schema. It combines a deterministic rules engine with optional LLM-enhanced analysis and a trust-ramped action executor that gradually earns autonomy over time.
+
+All Tier 1 analysis runs without any external dependencies. LLM integration is optional and only enhances Tier 2 features (briefings, diagnose, explain narrative).
 
 ---
 
@@ -23,41 +27,74 @@ docker exec -it pg_sage-pg_sage-1 psql -U postgres
 ```
 
 ```sql
-CREATE EXTENSION pg_sage;
+-- Extension is auto-loaded via shared_preload_libraries
+-- Check system status
 SELECT * FROM sage.status();
+
+-- See what pg_sage found
+SELECT category, severity, title FROM sage.findings WHERE status = 'open' ORDER BY severity;
+
+-- Get a health briefing
+SELECT sage.briefing();
 ```
+
+Example output after ~60 seconds:
+
+```
+ category            | severity | title
+---------------------+----------+---------------------------------------------------------------
+ duplicate_index     | critical | Duplicate index public.idx_orders_dup2 matches idx_orders_dup1
+ sequence_exhaustion | critical | Sequence public.orders_seq at 93.1% capacity (integer)
+ config              | warning  | shared_buffers below recommended 25% of RAM
+ security_missing_rls| warning  | Table public.customers has sensitive columns but no RLS
+ unused_index        | warning  | Unused index public.idx_old on public.orders (zero scans)
+ config              | info     | max_connections significantly exceeds peak usage
+```
+
+---
+
+## Why pg_sage?
+
+| | pg_sage | pganalyze | OtterTune / DBtune |
+|---|---|---|---|
+| **Runs inside Postgres** | Native C extension, zero external infra | SaaS agent + cloud dashboard | Cloud-only SaaS |
+| **Takes action** | Trust-ramped autonomous remediation | Recommendations only | Knob tuning only |
+| **Self-hosted** | Fully, AGPL-3.0 | Proprietary | Proprietary |
+| **LLM dependency** | Optional (Tier 1 works without it) | N/A | Required |
 
 ---
 
 ## Architecture
 
-pg_sage implements a three-tier architecture (spec v2.2):
+pg_sage implements a three-tier architecture:
 
 ### Tier 1 -- Rules Engine
 
-Deterministic checks that run every analyzer interval:
+Deterministic checks that run every analyzer interval, no LLM required:
 
 | Category | What it detects |
 |---|---|
 | **Index health** | Duplicate indexes, unused indexes, missing indexes, index bloat |
 | **Query performance** | Slow queries, query regressions, sequential scans on large tables |
 | **Sequences** | Approaching exhaustion (bigint/int overflow) |
-| **Maintenance** | Vacuum needs, table bloat, dead tuple accumulation |
+| **Maintenance** | Vacuum needs, table bloat, dead tuple accumulation, XID wraparound |
 | **Configuration** | Audit of `postgresql.conf` against best practices |
-| **Security** | Privilege escalation risks, authentication configuration |
-| **Replication** | Lag monitoring, slot health |
-| **Self-monitoring** | Extension health, circuit breaker status |
+| **Security** | Overprivileged roles, missing RLS on sensitive tables |
+| **Replication** | Lag monitoring, inactive slots, WAL archiving staleness |
+| **Self-monitoring** | Extension health, circuit breaker status, schema footprint |
 
 ### Tier 2 -- LLM-Enhanced Analysis
 
 Optional features that use an external LLM for natural-language intelligence:
 
-- **Daily briefings** -- summarized health reports
-- **Interactive diagnose** -- ReAct loop that reasons through problems step by step
-- **Explain narrative** -- human-readable query plan analysis
-- **Cost attribution** -- map resource consumption to queries and schemas
-- **Migration review** -- assess DDL changes before deployment
-- **Schema design review** -- identify normalization and type issues
+- **Daily briefings** -- summarized health reports delivered on schedule
+- **Interactive diagnose** -- ReAct loop that reasons through problems step by step, executing follow-up SQL queries autonomously
+- **Explain narrative** -- human-readable query plan analysis via `sage.explain(queryid)`
+- **Cost attribution** -- map storage and IOPS costs to unused indexes and missing indexes
+- **Migration review** -- detect long-running DDL blocking production
+- **Schema design review** -- timezone-naive timestamps, missing PKs, naming issues
+
+**EXPLAIN plan capture**: Plans are captured on-demand via `sage.explain(queryid)`, which runs `EXPLAIN (FORMAT JSON, COSTS, VERBOSE)` against the query text from `pg_stat_statements` and caches the result. No `auto_explain` dependency required.
 
 ### Tier 3 -- Action Executor
 
@@ -71,7 +108,7 @@ Automated remediation with a graduated trust model:
 
 HIGH-risk actions always require manual confirmation regardless of trust level.
 
-Every autonomous action is logged to `sage.action_log` with full rollback metadata.
+Every autonomous action is logged to `sage.action_log` with before/after state and rollback SQL. The rollback checker monitors for p95 latency regressions and automatically reverts actions that degrade performance.
 
 ---
 
@@ -81,7 +118,7 @@ Every autonomous action is logged to `sage.action_log` with full rollback metada
 -- System status as JSONB
 SELECT * FROM sage.status();
 
--- Daily health briefing (Tier 2, requires LLM)
+-- Daily health briefing (works with or without LLM)
 SELECT * FROM sage.briefing();
 
 -- Interactive diagnostic with ReAct reasoning (Tier 2)
@@ -106,11 +143,11 @@ All objects live in the `sage` schema:
 
 | Table | Purpose |
 |---|---|
-| `sage.snapshots` | Point-in-time system state captures |
-| `sage.findings` | Detected issues with severity and metadata |
-| `sage.action_log` | Audit trail for every autonomous action |
-| `sage.explain_cache` | Cached EXPLAIN plans |
-| `sage.briefings` | Generated briefing reports |
+| `sage.snapshots` | Point-in-time system state captures (indexes, tables, sequences, system) |
+| `sage.findings` | Detected issues with severity, recommendation, and remediation SQL |
+| `sage.action_log` | Audit trail for every autonomous action with rollback metadata |
+| `sage.explain_cache` | Cached EXPLAIN plans keyed by queryid |
+| `sage.briefings` | Generated briefing reports with delivery status |
 | `sage.config` | Extension configuration overrides |
 
 ---
@@ -122,13 +159,13 @@ Set these in `postgresql.conf` or via `ALTER SYSTEM`:
 | Parameter | Default | Description |
 |---|---|---|
 | `sage.enabled` | `on` | Master enable/disable switch |
-| `sage.collector_interval` | `30` | Seconds between snapshot collections |
-| `sage.analyzer_interval` | `60` | Seconds between analysis runs |
+| `sage.collector_interval` | `30s` | Interval between snapshot collections |
+| `sage.analyzer_interval` | `60s` | Interval between analysis runs |
 | `sage.trust_level` | `observation` | Current trust tier (`observation`, `advisory`, `autonomous`) |
-| `sage.slow_query_threshold` | `1000` | Slow query threshold in milliseconds |
-| `sage.seq_scan_min_rows` | `10000` | Minimum rows for sequential scan alerts |
-| `sage.rollback_threshold` | `5` | Failed actions before circuit breaker trips |
-| `sage.llm_enabled` | `off` | Enable Tier 2 LLM features |
+| `sage.slow_query_threshold` | `1s` | Slow query threshold |
+| `sage.seq_scan_min_rows` | `100000` | Minimum table rows for sequential scan alerts |
+| `sage.rollback_threshold` | `10` | p95 latency regression % that triggers automatic rollback |
+| `sage.llm_enabled` | `on` | Enable Tier 2 LLM features (gracefully degrades when no endpoint configured) |
 
 ---
 
@@ -147,9 +184,9 @@ pg_sage includes a circuit breaker that protects your database from runaway anal
 
 ### Prerequisites
 
-- PostgreSQL 17
+- PostgreSQL 14, 15, 16, or 17
 - `pg_stat_statements` extension
-- `libcurl` development headers (for LLM integration)
+- `libcurl` development headers (for optional LLM integration)
 
 ### Docker (recommended)
 
@@ -180,6 +217,8 @@ CREATE EXTENSION pg_stat_statements;
 CREATE EXTENSION pg_sage;
 ```
 
+> **Note on managed services**: pg_sage requires `shared_preload_libraries` access, which is not available on RDS, Aurora, or Cloud SQL. A sidecar deployment mode for managed databases is planned for a future release.
+
 ---
 
 ## Testing
@@ -190,18 +229,16 @@ Three test suites are included:
 |---|---|---|
 | `test/regression.sql` | 27 | Core functionality and schema validation |
 | `test/run_tests.sql` | 14 | Integration tests across tiers |
-| `test/test_all_features.sql` | -- | Comprehensive feature coverage |
+| `test/test_all_features.sql` | -- | Comprehensive feature coverage (all tiers) |
 
-Run all tests against the Docker container:
+Run against the Docker container:
 
 ```bash
+# Full feature test
 docker exec -i pg_sage-pg_sage-1 psql -U postgres < test/test_all_features.sql
-```
 
-Or use the build-and-test script:
-
-```bash
-docker exec -i pg_sage-pg_sage-1 bash /build/pg_sage/test/build_and_test.sh
+# Regression suite (27 pass/fail assertions)
+docker exec -i pg_sage-pg_sage-1 psql -U postgres < test/regression.sql
 ```
 
 ---
@@ -238,20 +275,19 @@ pg_sage/
 ├── test/
 │   ├── regression.sql
 │   ├── run_tests.sql
-│   ├── test_all_features.sql
-│   └── build_and_test.sh
+│   └── test_all_features.sql
+├── docs/
+│   └── pg_sage_spec_v2.2.md      # Full specification
 └── docker-entrypoint-initdb.d/
 ```
 
 ---
 
-## Background Workers
+## Roadmap
 
-pg_sage registers three background workers:
-
-1. **Collector** -- captures snapshots of `pg_stat_statements`, `pg_stat_user_tables`, `pg_stat_user_indexes`, sequences, and replication state at a configurable interval.
-2. **Analyzer** -- runs the Tier 1 rules engine against collected snapshots, generates findings, and (at sufficient trust level) invokes the Tier 3 action executor.
-3. **Briefing** -- generates periodic Tier 2 health briefings when LLM integration is enabled.
+- **v0.2** -- PG14/15/16 CI matrix, `auto_explain` integration for passive plan capture
+- **v0.5** -- MCP server for IDE/agent integration, sidecar mode for RDS/Aurora/Cloud SQL
+- **v1.0** -- Production hardening, pg_upgrade compatibility, PGXN publishing
 
 ---
 
