@@ -74,9 +74,11 @@ jobs:
           sudo -u postgres psql -c "CREATE EXTENSION pg_sage;"
           sudo -u postgres psql -c "SELECT sage.status();"
 
-          # Run regression tests
+          # Copy test file to postgres-accessible location and run
+          sudo cp test/regression.sql /tmp/regression.sql
+          sudo chmod 644 /tmp/regression.sql
           set -o pipefail
-          sudo -u postgres psql -f test/regression.sql 2>&1 | tee /tmp/test_output.txt
+          sudo -u postgres psql -f /tmp/regression.sql 2>&1 | tee /tmp/test_output.txt
 
       - name: Check test results
         if: always()
