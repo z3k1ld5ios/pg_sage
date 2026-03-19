@@ -1,0 +1,52 @@
+site_name: pg_sage
+site_description: Autonomous PostgreSQL DBA Agent
+site_url: https://jasonmassie01.github.io/pg_sage/
+repo_url: https://github.com/jasonmassie01/pg_sage
+repo_name: jasonmassie01/pg_sage
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: blue grey
+      accent: teal
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: blue grey
+      accent: teal
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - content.code.copy
+    - search.highlight
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Configuration: configuration.md
+  - Architecture: architecture.md
+  - MCP Sidecar: mcp-sidecar.md
+  - SQL Reference: sql-reference.md
+  - Findings Catalog: findings.md
+  - Deployment: deployment.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true

@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"sync"
 	"syscall"
@@ -43,6 +44,10 @@ type Config struct {
 	RateLimit      int
 	TokenBudget    int
 	APIKey         string
+	TLSCert        string
+	TLSKey         string
+	PGMaxConns     int32
+	PGMinConns     int32
 }
 
 func loadConfig() Config {
@@ -53,8 +58,37 @@ func loadConfig() Config {
 		RateLimit:      envOrDefaultInt("SAGE_RATE_LIMIT", 60),
 		TokenBudget:    envOrDefaultInt("SAGE_TOKEN_BUDGET", 10000),
 		APIKey:         os.Getenv("SAGE_API_KEY"),
+		TLSCert:        os.Getenv("SAGE_TLS_CERT"),
+		TLSKey:         os.Getenv("SAGE_TLS_KEY"),
+		PGMaxConns:     int32(envOrDefaultInt("SAGE_PG_MAX_CONNS", 5)),
+		PGMinConns:     int32(envOrDefaultInt("SAGE_PG_MIN_CONNS", 1)),
 	}
 	return cfg
+}
+
+// maxRequestBodySize is the maximum allowed request body (1 MB).
+const maxRequestBodySize = 1 << 20
+
+// validTableName matches schema.table or table (alphanumeric + underscores + dots).
+var validTableName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$`)
+
+// validInteger matches an optional minus and digits.
+var validInteger = regexp.MustCompile(`^-?[0-9]+$`)
+
+// validateTableName returns an error if name is not a valid identifier.
+func validateTableName(name string) error {
+	if !validTableName.MatchString(name) {
+		return fmt.Errorf("invalid table name: must be alphanumeric/underscores in table or schema.table format")
+	}
+	return nil
+}
+
+// validateQueryID returns an error if qid is not a valid integer string.
+func validateQueryID(qid string) error {
+	if !validInteger.MatchString(qid) {
+		return fmt.Errorf("invalid queryid: must be an integer")
+	}
+	return nil
 }
 
 func envOrDefault(key, def string) string {
@@ -80,23 +114,32 @@ func envOrDefaultInt(key string, def int) int {
 func main() {
 	cfg := loadConfig()
 
-	log.Printf("[sage-sidecar] starting — MCP port=%s, Prometheus port=%s", cfg.MCPPort, cfg.PrometheusPort)
+	logInfo("startup", "starting — MCP port=%s, Prometheus port=%s", cfg.MCPPort, cfg.PrometheusPort)
 	if cfg.APIKey != "" {
-		log.Println("[sage-sidecar] API key authentication enabled")
+		logInfo("startup", "API key authentication enabled")
 	} else {
-		log.Println("[sage-sidecar] API key authentication disabled (SAGE_API_KEY not set)")
+		logWarn("startup", "API key authentication disabled (SAGE_API_KEY not set)")
 	}
+	if cfg.TLSCert != "" && cfg.TLSKey != "" {
+		logInfo("startup", "TLS enabled — cert=%s key=%s", cfg.TLSCert, cfg.TLSKey)
+	} else {
+		logInfo("startup", "TLS disabled (SAGE_TLS_CERT / SAGE_TLS_KEY not set)")
+	}
+	logInfo("startup", "PG pool — max_conns=%d, min_conns=%d", cfg.PGMaxConns, cfg.PGMinConns)
 
 	// Connect to PostgreSQL
 	poolCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
 	if err != nil {
-		log.Fatalf("invalid DATABASE_URL: %v", err)
+		logError("startup", "invalid DATABASE_URL: %v", err)
+		os.Exit(1)
 	}
-	poolCfg.MaxConns = 3
+	poolCfg.MaxConns = cfg.PGMaxConns
+	poolCfg.MinConns = cfg.PGMinConns
 
 	pool, err = pgxpool.NewWithConfig(context.Background(), poolCfg)
 	if err != nil {
-		log.Fatalf("cannot create pool: %v", err)
+		logError("startup", "cannot create pool: %v", err)
+		os.Exit(1)
 	}
 	defer pool.Close()
 
@@ -104,16 +147,20 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := pool.Ping(ctx); err != nil {
-		log.Fatalf("cannot connect to PostgreSQL: %v", err)
+		logError("startup", "cannot connect to PostgreSQL: %v", err)
+		os.Exit(1)
 	}
-	log.Println("[sage-sidecar] connected to PostgreSQL")
+	logInfo("startup", "connected to PostgreSQL")
+
+	// Background pool health check every 30 seconds
+	go poolHealthCheck()
 
 	// Detect whether the pg_sage extension is installed
 	extensionAvailable = detectExtension()
 	if extensionAvailable {
-		log.Println("[sage-sidecar] mode: EXTENSION — pg_sage schema and functions detected")
+		logInfo("startup", "mode: EXTENSION — pg_sage schema and functions detected")
 	} else {
-		log.Println("[sage-sidecar] mode: SIDECAR-ONLY — pg_sage extension not found, using direct catalog queries")
+		logInfo("startup", "mode: SIDECAR-ONLY — pg_sage extension not found, using direct catalog queries")
 	}
 
 	// Ensure mcp_log table exists (uses sage schema only when extension is present)
@@ -127,9 +174,14 @@ func main() {
 	mcpMux.HandleFunc("/sse", handleSSE)
 	mcpMux.HandleFunc("/messages", handleMessages)
 
+	handler := securityHeadersMiddleware(
+		requestTimeoutMiddleware(
+			authMiddleware(cfg.APIKey,
+				rateLimitMiddleware(rl, mcpMux))))
+
 	mcpServer := &http.Server{
 		Addr:    ":" + cfg.MCPPort,
-		Handler: authMiddleware(cfg.APIKey, rateLimitMiddleware(rl, mcpMux)),
+		Handler: handler,
 	}
 
 	// Prometheus server
@@ -137,9 +189,19 @@ func main() {
 
 	// Start MCP server
 	go func() {
-		log.Printf("[mcp] listening on :%s", cfg.MCPPort)
-		if err := mcpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("[mcp] server error: %v", err)
+		if cfg.TLSCert != "" && cfg.TLSKey != "" {
+			logInfo("mcp", "listening on :%s (TLS)", cfg.MCPPort)
+			mcpServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+			if err := mcpServer.ListenAndServeTLS(cfg.TLSCert, cfg.TLSKey); err != nil && err != http.ErrServerClosed {
+				logError("mcp", "server error: %v", err)
+				os.Exit(1)
+			}
+		} else {
+			logInfo("mcp", "listening on :%s (plain HTTP)", cfg.MCPPort)
+			if err := mcpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				logError("mcp", "server error: %v", err)
+				os.Exit(1)
+			}
 		}
 	}()
 
@@ -147,13 +209,59 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
-	log.Println("[sage-sidecar] shutting down…")
+	logInfo("shutdown", "shutting down…")
 
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutCancel()
 	_ = mcpServer.Shutdown(shutCtx)
 	_ = promServer.Shutdown(shutCtx)
-	log.Println("[sage-sidecar] stopped")
+	logInfo("shutdown", "stopped")
+}
+
+// ---------------------------------------------------------------------------
+// Pool health check
+// ---------------------------------------------------------------------------
+
+func poolHealthCheck() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := pool.Ping(ctx); err != nil {
+			logWarn("pool-health", "ping failed: %v", err)
+		}
+		cancel()
+		stat := pool.Stat()
+		if stat.TotalConns() == stat.MaxConns() {
+			logWarn("pool-health", "pool exhausted — total=%d max=%d idle=%d",
+				stat.TotalConns(), stat.MaxConns(), stat.IdleConns())
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Security headers middleware
+// ---------------------------------------------------------------------------
+
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Request timeout middleware (30s per MCP request)
+// ---------------------------------------------------------------------------
+
+func requestTimeoutMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +285,7 @@ func detectExtension() bool {
 		)
 	`).Scan(&exists)
 	if err != nil {
-		log.Printf("[sage-sidecar] extension detection query failed: %v", err)
+		logWarn("startup", "extension detection query failed: %v", err)
 		return false
 	}
 	return exists
@@ -207,7 +315,7 @@ func ensureMCPLogTable() {
 			)
 		`)
 		if err != nil {
-			log.Printf("[mcp] warning: could not create sage.mcp_log: %v", err)
+			logWarn("mcp", "could not create sage.mcp_log: %v", err)
 		}
 	} else {
 		// In sidecar-only mode the sage schema may not exist.
@@ -227,7 +335,7 @@ func ensureMCPLogTable() {
 			)
 		`)
 		if err != nil {
-			log.Printf("[mcp] warning: could not create public.sage_mcp_log: %v", err)
+			logWarn("mcp", "could not create public.sage_mcp_log: %v", err)
 		}
 	}
 }
@@ -297,10 +405,13 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	sess := val.(*sseSession)
 
+	// Limit request body size to 1 MB
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+
 	// Parse JSON-RPC request
 	var req JSONRPCRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"invalid JSON or request too large"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -325,7 +436,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	select {
 	case sess.ch <- data:
 	default:
-		log.Printf("[mcp] session %s buffer full, dropping response", sessionID)
+		logWarn("mcp", "session %s buffer full, dropping response", sessionID)
 	}
 
 	// Also return 202 to the POST caller
@@ -337,6 +448,14 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func dispatch(ctx context.Context, req JSONRPCRequest) JSONRPCResponse {
+	// Check if pool is exhausted before executing DB-backed methods
+	if isPoolExhausted() {
+		switch req.Method {
+		case "resources/read", "tools/call", "prompts/get":
+			return rpcErr(req.ID, -32000, "server overloaded: connection pool exhausted, try again later")
+		}
+	}
+
 	switch req.Method {
 
 	case "initialize":
@@ -365,6 +484,9 @@ func dispatch(ctx context.Context, req JSONRPCRequest) JSONRPCResponse {
 		if err != nil {
 			return rpcInvalidParams(req.ID, err.Error())
 		}
+		if err := validateResourceURI(uri); err != nil {
+			return rpcInvalidParams(req.ID, err.Error())
+		}
 		result, err := readResource(ctx, uri)
 		if err != nil {
 			return rpcInternalError(req.ID, err.Error())
@@ -377,6 +499,9 @@ func dispatch(ctx context.Context, req JSONRPCRequest) JSONRPCResponse {
 	case "tools/call":
 		name, args, err := unmarshalToolsCall(req.Params)
 		if err != nil {
+			return rpcInvalidParams(req.ID, err.Error())
+		}
+		if err := validateToolArgs(name, args); err != nil {
 			return rpcInvalidParams(req.ID, err.Error())
 		}
 		result, err := callTool(ctx, name, args)
@@ -402,6 +527,43 @@ func dispatch(ctx context.Context, req JSONRPCRequest) JSONRPCResponse {
 	default:
 		return rpcMethodNotFound(req.ID, req.Method)
 	}
+}
+
+// isPoolExhausted returns true when the PG pool has no idle connections and
+// total connections equal max connections.
+func isPoolExhausted() bool {
+	stat := pool.Stat()
+	return stat.IdleConns() == 0 && stat.TotalConns() == stat.MaxConns()
+}
+
+// validateResourceURI validates URI parameters embedded in resource URIs.
+func validateResourceURI(uri string) error {
+	switch {
+	case uri == "sage://health", uri == "sage://findings", uri == "sage://slow-queries":
+		return nil
+	case len(uri) > 14 && uri[:14] == "sage://schema/":
+		return validateTableName(uri[14:])
+	case len(uri) > 13 && uri[:13] == "sage://stats/":
+		return validateTableName(uri[13:])
+	case len(uri) > 15 && uri[:15] == "sage://explain/":
+		return validateQueryID(uri[15:])
+	default:
+		return fmt.Errorf("unknown resource URI: %s", uri)
+	}
+}
+
+// validateToolArgs validates arguments for known tools.
+func validateToolArgs(name string, args json.RawMessage) error {
+	switch name {
+	case "suggest_index":
+		var p struct {
+			Table string `json:"table"`
+		}
+		if err := json.Unmarshal(args, &p); err == nil && p.Table != "" {
+			return validateTableName(p.Table)
+		}
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -444,4 +606,26 @@ func auditLog(ip string, req JSONRPCRequest, duration time.Duration, resp JSONRP
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, table),
 		ip, req.Method, resourceURI, toolName, 0, int(duration.Milliseconds()), status, errMsg,
 	)
+}
+
+// ---------------------------------------------------------------------------
+// Structured logging helpers
+// ---------------------------------------------------------------------------
+
+func logInfo(component, msg string, args ...any) {
+	logStructured("INFO", component, msg, args...)
+}
+
+func logWarn(component, msg string, args ...any) {
+	logStructured("WARN", component, msg, args...)
+}
+
+func logError(component, msg string, args ...any) {
+	logStructured("ERROR", component, msg, args...)
+}
+
+func logStructured(level, component, msg string, args ...any) {
+	ts := time.Now().UTC().Format(time.RFC3339)
+	formatted := fmt.Sprintf(msg, args...)
+	fmt.Printf("%s [%s] [%s] %s\n", ts, level, component, formatted)
 }

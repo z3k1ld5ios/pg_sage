@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -17,9 +16,9 @@ func startPrometheusServer(addr string) *http.Server {
 
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
-		log.Printf("[prometheus] listening on %s", addr)
+		logInfo("prometheus", "listening on %s", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("[prometheus] server error: %v", err)
+			logError("prometheus", "server error: %v", err)
 		}
 	}()
 	return srv

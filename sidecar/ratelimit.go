@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"sync"
@@ -112,7 +111,7 @@ func clientIP(r *http.Request) string {
 }
 
 func logRateLimited(ctx context.Context, ip, method, path string) {
-	log.Printf("[ratelimit] blocked %s %s %s", ip, method, path)
+	logWarn("ratelimit", "blocked %s %s %s", ip, method, path)
 
 	// Best-effort insert into audit log
 	table := "sage.mcp_log"

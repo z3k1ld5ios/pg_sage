@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"net/http"
 	"strings"
 )
@@ -21,7 +20,7 @@ func authMiddleware(apiKey string, next http.Handler) http.Handler {
 		header := r.Header.Get("Authorization")
 
 		if header == "" {
-			log.Printf("[auth] rejected %s %s from %s: missing Authorization header", r.Method, r.URL.Path, clientIP(r))
+			logWarn("auth", "rejected %s %s from %s: missing Authorization header", r.Method, r.URL.Path, clientIP(r))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte(`{"error":"missing Authorization header"}`))
@@ -31,7 +30,7 @@ func authMiddleware(apiKey string, next http.Handler) http.Handler {
 		token := strings.TrimPrefix(header, "Bearer ")
 		if token == header || token != apiKey {
 			// Either no "Bearer " prefix, or token doesn't match
-			log.Printf("[auth] rejected %s %s from %s: invalid API key", r.Method, r.URL.Path, clientIP(r))
+			logWarn("auth", "rejected %s %s from %s: invalid API key", r.Method, r.URL.Path, clientIP(r))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte(`{"error":"invalid API key"}`))
