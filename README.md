@@ -12,6 +12,41 @@ All Tier 1 analysis runs without any external dependencies. LLM integration is o
 
 ---
 
+## How pg_sage Is Different
+
+The Postgres AI tooling space is heating up. Here's where pg_sage fits:
+
+| | **pg_sage** | **Xata Agent** | **PostgresAI** | **pg-aiguide** |
+|---|---|---|---|---|
+| **Architecture** | Native C extension + background workers inside Postgres | External Docker container connecting to Postgres | External CLI/Docker + Grafana stack | MCP server plugin for AI coding tools |
+| **Runs inside Postgres** | ✅ Extension (`CREATE EXTENSION pg_sage`) | ❌ Separate container | ❌ Separate process | ❌ External MCP server |
+| **Autonomous actions** | ✅ Trust-ramped executor (observe → advise → act) | ❌ Suggests only | ❌ Suggests only | ❌ Not applicable (schema guidance only) |
+| **Continuous monitoring** | ✅ Background workers with configurable intervals | ✅ Scheduled checks | ✅ Continuous via monitoring stack | ❌ On-demand only |
+| **Rules engine (no LLM needed)** | ✅ Full Tier 1 runs with zero external dependencies | ⚠️ Playbooks guide LLM reasoning | ⚠️ Checkup rules + LLM analysis | ❌ LLM-dependent |
+| **LLM provider** | Pluggable — any OpenAI-compatible endpoint (Claude, GPT, Ollama, local models) | OpenAI, Anthropic, DeepSeek | LLM-agnostic piping | Claude Code / Cursor integration |
+| **Self-hosted / air-gapped** | ✅ Tier 1 works fully offline; Tier 2 works with local Ollama | ✅ Self-hosted container | ✅ Self-hosted | ⚠️ Requires cloud MCP endpoint |
+| **Data leaves your server** | ❌ EXPLAIN plans + schema metadata only (to LLM, if enabled) | ⚠️ Query patterns sent to LLM | ⚠️ Health data piped to LLM | ⚠️ Schema sent to MCP server |
+| **Graduated trust model** | ✅ 30-day ramp: Observation → Advisory → Autonomous | ❌ | ❌ | ❌ |
+| **Circuit breaker** | ✅ Automatic + manual emergency stop | ❌ | ❌ | ❌ |
+| **License** | AGPL-3.0 | Apache-2.0 | Various (open source) | PostgreSQL License |
+
+**The short version:** Most Postgres AI tools are external processes that observe your database and suggest fixes. pg_sage is a native extension that *lives inside* your database, earns trust over time, and eventually handles routine DBA work autonomously — with a kill switch you control.
+
+---
+
+## Why pg_sage Exists
+
+I've spent 25 years as a DBA and Solutions Architect at Google Cloud, AWS, IBM, and Verizon — managing, tuning, and firefighting PostgreSQL, Oracle, SQL Server, and MySQL in production. Every "AI for databases" tool I've evaluated falls into one of two traps:
+
+1. **SaaS dashboards** that want your query telemetry shipped to their cloud. Enterprises won't do this. Banks won't do this. Anyone who cares about data sovereignty won't do this.
+2. **One-shot tuners** that optimize your config once and collect dust. OtterTune proved this model doesn't stick — they shut down after struggling to retain users post-initial-tune.
+
+pg_sage takes a different approach: it's a native Postgres extension that runs as background workers *inside your database*. It starts in observation mode, builds a baseline of your workload patterns, and gradually earns autonomy to handle routine maintenance — dropping unused indexes, tuning autovacuum, flagging regressions — the same work a senior DBA does every morning with their coffee.
+
+The LLM integration is optional and pluggable. Point it at Claude, GPT-4, or a local Ollama instance running Qwen. Your EXPLAIN plans and schema metadata are the only things that leave the server — never your actual data.
+
+---
+
 ## Quick Start
 
 ```bash
@@ -51,9 +86,33 @@ Example output after ~60 seconds:
  config              | info     | max_connections significantly exceeds peak usage
 ```
 
+### What You'll See
+
+After the extension loads and the first collector/analyzer cycle completes (~60 seconds), `sage.status()` returns:
+
+```json
+{
+  "version": "0.1.0",
+  "trust_level": "observation",
+  "uptime_seconds": 67,
+  "collector": {"status": "running", "last_run": "2026-03-21T12:00:30Z", "snapshots": 2},
+  "analyzer": {"status": "running", "last_run": "2026-03-21T12:01:00Z", "findings": 4},
+  "circuit_breaker": {"db_ops": "closed", "llm": "closed"},
+  "llm_enabled": false
+}
+```
+
+Check findings:
+
+```sql
+SELECT severity, category, title, recommendation
+FROM sage.findings
+ORDER BY severity DESC;
+```
+
 ---
 
-## Why pg_sage?
+## Architecture
 
 | | pg_sage | pganalyze | OtterTune / DBtune |
 |---|---|---|---|
@@ -384,9 +443,23 @@ pg_sage/
 
 ## Roadmap
 
-- ~~**v0.5** -- MCP server for IDE/agent integration, sidecar mode for RDS/Aurora/Cloud SQL~~ ✓
-- **v0.6** -- PG14/15/16 CI matrix, `auto_explain` integration for passive plan capture
-- **v1.0** -- Production hardening, pg_upgrade compatibility, PGXN publishing
+- **v0.1.0** (current) — Core extension: rules engine, collector, analyzer, action executor, trust model, circuit breaker
+- **v0.2.0** — MCP server interface for Claude Code / Cursor / AI coding tool integration
+- **v0.3.0** — Learned baseline: workload fingerprinting and anomaly detection against your normal patterns
+- **v0.4.0** — pg_sage CLI companion for non-SQL interaction and configuration management
+- **v1.0.0** — Production-hardened release with multi-database support and extension marketplace
+
+See the [spec](pg_sage_spec_v2.2.md) for the full technical design.
+
+---
+
+## Community
+
+- **Blog:** [pg-sage.substack.com](https://pg-sage.substack.com) — development updates, architecture deep dives, DBA war stories
+- **Issues:** [GitHub Issues](https://github.com/jasonmassie01/pg_sage/issues) — bug reports, feature requests, questions welcome
+- **Author:** [Jason Massie](https://www.linkedin.com/in/jasonmassie/) — 25 years in database engineering, currently Lead Database CE at Google Cloud
+
+Built by a DBA, for DBAs (and the developers who wish they had one).
 
 ---
 
