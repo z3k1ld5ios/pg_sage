@@ -1,471 +1,327 @@
 # pg_sage
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-[![PostgreSQL 14+](https://img.shields.io/badge/PostgreSQL-14%2B-336791.svg)](https://www.postgresql.org/)
-[![Works without LLM](https://img.shields.io/badge/LLM-optional-green.svg)](#tier-2----llm-enhanced-analysis)
-[![CI: PG 14-17](https://img.shields.io/badge/CI-PG%2014--17-336791.svg)](#testing)
+[![Go](https://img.shields.io/badge/Go-1.23-00ADD8.svg)](https://go.dev)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14--17-336791.svg)](https://www.postgresql.org)
+[![Tests](https://img.shields.io/badge/tests-240%20passing-brightgreen.svg)](#testing)
 
-**Autonomous PostgreSQL DBA Agent** -- a native C extension and standalone Go sidecar that continuously monitor, analyze, and maintain your PostgreSQL database.
+**Autonomous PostgreSQL DBA Agent** — monitors, analyzes, and optimizes any PostgreSQL 14–17 database. Works on managed services (Cloud SQL, AlloyDB, Aurora, RDS) and self-managed instances.
 
-pg_sage ships in two complementary forms:
+pg_sage is a Go sidecar that connects to your database over the network, collects performance data from `pg_stat_statements` and catalog views, runs 18+ diagnostic rules, sends enriched context to an LLM for index optimization, and executes fixes autonomously with trust-ramped safety controls.
 
-1. **C extension** (v0.5.0) -- runs inside PostgreSQL as background workers, requires `shared_preload_libraries` access.
-2. **Standalone sidecar** (v0.7.0-rc1) -- a Go binary that connects to any PostgreSQL instance over a standard connection. Works with **Cloud SQL, AlloyDB, RDS, and Aurora** without any extension installation.
+```
+curl -fsSL https://github.com/jasonmassie01/pg_sage/releases/latest/download/pg_sage_linux_amd64 -o pg_sage
+chmod +x pg_sage
+./pg_sage --database-url "postgres://user:pass@host:5432/db"
+```
 
-All Tier 1 analysis runs without any external dependencies. LLM integration is optional and only enhances Tier 2 features (briefings, diagnose, explain narrative).
+---
+
+## What It Does
+
+**Collects** snapshots every 60s from pg_stat_statements, pg_stat_user_tables, pg_stat_user_indexes, sequences, locks, replication state, and 5+ additional catalog views.
+
+**Analyzes** with 18+ deterministic rules that detect slow queries, missing indexes, duplicate indexes, unused indexes, table bloat, sequence exhaustion, checkpoint pressure, and more.
+
+**Optimizes** with an LLM-powered index optimizer that consolidates recommendations across your workload, validates them with [HypoPG](https://hypopg.readthedocs.io/) before execution, and scores confidence using 6 weighted signals.
+
+**Executes** autonomously with graduated trust: observation → advisory → autonomous. All DDL uses `CONCURRENTLY`. Every action has rollback metadata. Regression triggers automatic rollback.
+
+**Reports** via [MCP](https://modelcontextprotocol.io/) (Claude Desktop), Prometheus metrics, and structured briefings.
 
 ---
 
 ## Quick Start
 
-### With Docker (extension + sidecar)
+### Managed PostgreSQL (Cloud SQL, AlloyDB, Aurora, RDS)
 
 ```bash
-git clone https://github.com/jasonmassie01/pg_sage.git
-cd pg_sage
-docker compose up
+# Download
+curl -fsSL https://github.com/jasonmassie01/pg_sage/releases/latest/download/pg_sage_linux_amd64 -o pg_sage
+chmod +x pg_sage
+
+# Run (minimum config — observation mode, no LLM)
+./pg_sage \
+  --database-url "postgres://sage_agent:pw@your-instance:5432/postgres" \
+  --mode standalone
 ```
 
-Once the container is running:
+### Docker
 
 ```bash
-docker exec -it pg_sage-pg_sage-1 psql -U postgres
+docker run -e SAGE_DATABASE_URL="postgres://sage_agent:pw@host:5432/db" \
+  -p 8080:8080 -p 9187:9187 \
+  ghcr.io/jasonmassie01/pg_sage:latest
 ```
+
+### With LLM (Gemini, Claude, or any OpenAI-compatible API)
+
+```yaml
+# config.yaml
+mode: standalone
+
+postgres:
+  host: your-instance-ip
+  port: 5432
+  user: sage_agent
+  password: your-password
+  database: postgres
+  sslmode: require
+  max_connections: 5
+
+collector:
+  interval_seconds: 60
+
+analyzer:
+  interval_seconds: 120
+
+trust:
+  level: observation     # start here, promote after confidence builds
+
+llm:
+  enabled: true
+  endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+  model: "gemini-2.5-flash"
+  api_key: ${SAGE_GEMINI_API_KEY}
+  optimizer:
+    enabled: true
+
+mcp:
+  enabled: true
+  listen_addr: "0.0.0.0:8080"
+
+prometheus:
+  listen_addr: "0.0.0.0:9187"
+```
+
+```bash
+./pg_sage --config config.yaml
+```
+
+### Database User Setup
 
 ```sql
--- Extension is auto-loaded via shared_preload_libraries
-SELECT * FROM sage.status();
-SELECT category, severity, title FROM sage.findings WHERE status = 'open' ORDER BY severity;
-SELECT sage.briefing();
+CREATE USER sage_agent WITH PASSWORD 'your-password';
+GRANT pg_monitor TO sage_agent;
+GRANT pg_read_all_stats TO sage_agent;
+GRANT CREATE ON SCHEMA public TO sage_agent;    -- for index creation
+GRANT pg_signal_backend TO sage_agent;           -- for query termination
+CREATE SCHEMA sage;
+GRANT ALL ON SCHEMA sage TO sage_agent;
+ALTER DEFAULT PRIVILEGES IN SCHEMA sage GRANT ALL ON TABLES TO sage_agent;
 ```
-
-### Standalone sidecar (no extension required)
-
-```bash
-cp sidecar/config.example.yaml config.yaml
-# Edit config.yaml with your connection details
-cd sidecar && go build -o sage-sidecar ./cmd/pg_sage_sidecar
-./sage-sidecar --config ../config.yaml
-```
-
-The standalone sidecar runs the full collector, analyzer, and executor pipeline against any PostgreSQL database -- managed or self-hosted.
 
 ---
 
 ## Architecture
 
-pg_sage implements a three-tier architecture. Both the C extension and the standalone sidecar implement all three tiers.
+```
+pg_sage sidecar
+  ├── Collector        [every 60s]  pg_stat_statements, tables, indexes, locks, ...
+  ├── Analyzer         [every 120s]
+  │   ├── Tier 1: Rules engine (18+ deterministic checks)
+  │   └── Tier 2: Index Optimizer (LLM + HypoPG validation)
+  ├── Executor         [trust-gated]
+  │   ├── CONCURRENTLY DDL on raw pgx connection
+  │   ├── Rollback monitor (read + write latency regression)
+  │   └── Emergency stop via sage.config
+  ├── MCP Server       [:8080]  Claude Desktop / AI agent interface
+  └── Prometheus       [:9187]  Metrics endpoint
+```
 
-### Tier 1 -- Rules Engine
+### Tier 1 — Rules Engine
 
-Deterministic checks that run every analyzer interval, no LLM required:
+Deterministic checks that run every analyzer cycle. No LLM required.
 
-| Category | What it detects |
-|---|---|
-| **Index health** | Duplicate indexes, unused indexes, missing indexes, index bloat |
-| **Query performance** | Slow queries, query regressions, sequential scans on large tables |
-| **Sequences** | Approaching exhaustion (bigint/int overflow) |
-| **Maintenance** | Vacuum needs, table bloat, dead tuple accumulation, XID wraparound |
-| **Configuration** | Audit of `postgresql.conf` against best practices |
-| **Security** | Overprivileged roles, missing RLS on sensitive tables |
-| **Replication** | Lag monitoring, inactive slots, WAL archiving staleness |
-| **Self-monitoring** | Extension health, circuit breaker status, schema footprint |
+| Category | What It Detects |
+|----------|----------------|
+| Index health | Duplicate, unused, missing FK, invalid, bloated indexes |
+| Query performance | Slow queries, regressions, sequential scans on large tables |
+| Sequences | Approaching exhaustion (configurable threshold) |
+| Maintenance | Dead tuple accumulation, VACUUM needs, table bloat |
+| Checkpoint pressure | High checkpoint frequency |
+| Replication | Lag monitoring |
 
-### Tier 2 -- LLM-Enhanced Analysis
+### Tier 2 — LLM Index Optimizer
 
-Optional features that use an external LLM for natural-language intelligence:
+Sends enriched table context (columns, pg_stats selectivity, execution plans, write rates, workload classification) to an LLM and gets back consolidated index recommendations. Each recommendation passes through:
 
-- **Daily briefings** -- summarized health reports delivered on schedule
-- **Interactive diagnose** -- ReAct loop that reasons through problems step by step
-- **Explain narrative** -- human-readable query plan analysis via `sage.explain(queryid)`
-- **LLM index optimizer** -- cross-query index consolidation, INCLUDE column recommendations, with anti-proliferation guards (write-heavy skip, over-indexed table skip, CONCURRENTLY enforcement)
-- **Cost attribution** -- map storage and IOPS costs to unused indexes and missing indexes
-- **Migration review** -- detect long-running DDL blocking production
-- **Schema design review** -- timezone-naive timestamps, missing PKs, naming issues
+1. **8 validators** — CONCURRENTLY keyword, column existence, duplicate detection, write impact, max indexes, extension requirements, BRIN correlation, expression volatility
+2. **HypoPG validation** — creates hypothetical indexes and measures actual planner cost reduction (when HypoPG is installed)
+3. **Confidence scoring** — 6 weighted signals (query volume, plan clarity, write rate, HypoPG result, selectivity, table traffic) produce a 0.0–1.0 score
+4. **Action level** — ≥0.7 autonomous, ≥0.4 advisory, <0.4 informational
 
-### Tier 3 -- Action Executor
+Supports dual-model routing: a fast model (Gemini Flash, Haiku) for general tasks and a reasoning model (Opus, Pro) for index optimization.
 
-Automated remediation with a graduated trust model:
+### Tier 3 — Action Executor
 
 | Trust Level | Timeline | Allowed Actions |
-|---|---|---|
-| **OBSERVATION** | Day 0--7 | No actions; findings only |
-| **ADVISORY** | Day 8--30 | SAFE actions (drop unused/duplicate indexes, vacuum tuning) |
-| **AUTONOMOUS** | Day 31+ | MODERATE actions (create indexes, reindex, configuration changes) |
+|-------------|----------|----------------|
+| **observation** | Day 0–7 | No actions — findings only |
+| **advisory** | Day 8–30 | SAFE: drop unused/duplicate indexes, VACUUM |
+| **autonomous** | Day 31+ | MODERATE: create indexes, reindex |
 
-HIGH-risk actions always require manual confirmation regardless of trust level.
-
-Every autonomous action is logged to `sage.action_log` with before/after state and rollback SQL. The rollback checker monitors for p95 latency regressions and automatically reverts actions that degrade performance.
-
-**DDL Worker** (extension only): The C extension includes a dedicated background worker (`ddl_worker.c`) for executing DDL statements (CREATE INDEX, REINDEX, etc.) outside the main analyzer loop. This prevents long-running DDL from blocking analysis cycles.
+HIGH-risk actions (sequence changes, RLS) always require manual confirmation. Every action is logged to `sage.action_log` with before/after state and rollback SQL.
 
 ---
 
-## Cloud Database Support
-
-The v0.7.0 standalone sidecar removes the requirement for `shared_preload_libraries` access, enabling pg_sage on managed PostgreSQL services:
-
-| Provider | Service | Status |
-|---|---|---|
-| **Google Cloud** | Cloud SQL for PostgreSQL | Validated |
-| **Google Cloud** | AlloyDB | Validated |
-| **AWS** | RDS for PostgreSQL | Supported |
-| **AWS** | Aurora PostgreSQL | Supported |
-| **Any** | Self-hosted PostgreSQL 14+ | Supported |
-
-The sidecar connects as a regular database user and queries `pg_stat_statements`, `pg_stat_user_tables`, and other catalog views directly. It manages its own `sage` schema for findings, snapshots, and action logs.
-
-**Requirements for managed databases:**
-- `pg_stat_statements` extension enabled
-- A database user with read access to `pg_catalog` and the ability to create objects in a `sage` schema
-- Network connectivity from the sidecar host to the database
-
----
-
-## SQL Functions
-
-```sql
--- System status as JSONB
-SELECT * FROM sage.status();
-
--- Daily health briefing (works with or without LLM)
-SELECT * FROM sage.briefing();
-
--- Interactive diagnostic with ReAct reasoning (Tier 2)
-SELECT * FROM sage.diagnose('Why are my queries slow today?');
-
--- Human-readable query plan narrative (Tier 2)
-SELECT * FROM sage.explain(query_id);
-
--- Suppress a specific finding
-SELECT sage.suppress(finding_id, 'Known issue, vendor fix pending', 30);
-
--- Emergency controls
-SELECT sage.emergency_stop();   -- halt all autonomous activity immediately
-SELECT sage.resume();           -- resume normal operation
-```
-
----
-
-## MCP Sidecar (v0.7.0-rc1)
-
-The Go sidecar exposes pg_sage capabilities via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) over HTTP+SSE. This lets AI coding assistants (Claude, Cursor, Copilot) interact with your database through pg_sage.
-
-**In standalone mode**, the sidecar runs the full analysis pipeline itself -- no C extension needed. In extension mode, it delegates to the extension's SQL functions.
-
-### Architecture
-
-```
-┌──────────────────────┐     MCP (JSON-RPC over SSE)     ┌─────────────────┐
-│  AI Assistant / IDE  │ <-------------------------------> │  sage-sidecar   │
-└──────────────────────┘          port 5433               │  (Go binary)    │
-                                                          └────────┬────────┘
-                                                                   │ SQL
-                                                          ┌────────v────────┐
-                                                          │   PostgreSQL    │
-                                                          │ (any provider)  │
-                                                          └─────────────────┘
-```
-
-### MCP Resources
-
-| URI | Description |
-|---|---|
-| `sage://health` | System health overview (connections, cache hit ratio, disk, workers) |
-| `sage://findings` | Open findings with severity, recommendations, and remediation SQL |
-| `sage://schema/{table}` | DDL, indexes, constraints, columns, and foreign keys |
-| `sage://stats/{table}` | Table size, row counts, dead tuples, vacuum status |
-| `sage://slow-queries` | Top slow queries from pg_stat_statements |
-| `sage://explain/{queryid}` | Cached EXPLAIN plan |
-
-### MCP Tools
-
-| Tool | Description |
-|---|---|
-| `diagnose` | Interactive diagnostic analysis via ReAct reasoning |
-| `briefing` | Generate an on-demand health briefing |
-| `suggest_index` | Get index recommendations for a table |
-| `review_migration` | Review DDL for production safety |
-
-### Prometheus Metrics
-
-The sidecar exposes Prometheus metrics at `:9187/metrics`:
-
-- `pg_sage_info{version}` -- Extension version
-- `pg_sage_findings_total{severity}` -- Open findings by severity
-- `pg_sage_circuit_breaker_state{breaker}` -- Circuit breaker status
-
-### MCP SQL Functions
-
-These SQL functions return JSONB and are used by the sidecar, but can also be called directly (extension mode only):
-
-```sql
-SELECT sage.health_json();                     -- system health overview
-SELECT sage.findings_json();                   -- open findings
-SELECT sage.findings_json('resolved');         -- resolved findings
-SELECT sage.schema_json('public.orders');      -- table schema
-SELECT sage.stats_json('public.orders');       -- table statistics
-SELECT sage.slow_queries_json();               -- slow queries
-SELECT sage.explain_json(queryid);             -- cached explain plan
-```
-
----
-
-## Configuration
-
-### Extension GUCs
-
-Set these in `postgresql.conf` or via `ALTER SYSTEM`:
-
-| Parameter | Default | Description |
-|---|---|---|
-| `sage.enabled` | `on` | Master enable/disable switch |
-| `sage.collector_interval` | `30s` | Interval between snapshot collections |
-| `sage.analyzer_interval` | `60s` | Interval between analysis runs |
-| `sage.trust_level` | `observation` | Current trust tier (`observation`, `advisory`, `autonomous`) |
-| `sage.slow_query_threshold` | `1s` | Slow query threshold |
-| `sage.seq_scan_min_rows` | `100000` | Minimum table rows for sequential scan alerts |
-| `sage.rollback_threshold` | `10` | p95 latency regression % that triggers automatic rollback |
-| `sage.llm_enabled` | `off` | Enable Tier 2 LLM features |
-| `sage.llm_api_key_file` | `''` | Path to file containing the LLM API key (preferred over inline) |
-
-GUC check hooks validate all parameters at `SET` time. Invalid values are rejected immediately.
-
-### Sidecar YAML Configuration
-
-The standalone sidecar uses YAML-based configuration with hot-reload support. Copy `sidecar/config.example.yaml` to get started:
-
-```yaml
-mode: standalone     # "extension" or "standalone"
-
-postgres:
-  host: localhost
-  port: 5432
-  user: sage_agent
-  password: ${SAGE_PG_PASSWORD}   # Environment variable expansion
-  database: postgres
-
-collector:
-  interval_seconds: 60
-  batch_size: 1000
-
-analyzer:
-  interval_seconds: 600
-  slow_query_threshold_ms: 1000
-
-trust:
-  level: observation
-  maintenance_window: "0 2 * * 6 America/Chicago"
-
-llm:
-  enabled: false
-  endpoint: ""
-  api_key: ${SAGE_LLM_API_KEY}
-  model: ""
-```
-
-**Hot-reloadable fields** (change without restart): all `collector`, `analyzer`, `safety`, `trust`, `llm`, `briefing`, and `retention` settings.
-
-**Non-hot-reloadable** (require restart): `mode`, `postgres.*`, `mcp.listen_addr`, `prometheus.listen_addr`.
-
-Precedence: CLI flags > environment variables > config file > built-in defaults.
-
-See `sidecar/config.example.yaml` for the full reference with all defaults.
-
----
-
-## Grafana Dashboard
-
-A pre-built Grafana dashboard is included at `grafana/pg_sage_dashboard.json` with 18 panels covering findings by severity, connections, cache hit ratio, TPS, deadlocks, circuit breaker status, and database size. See `grafana/README.md` for import instructions.
-
----
-
-## Schema
-
-All objects live in the `sage` schema:
-
-| Table | Purpose |
-|---|---|
-| `sage.snapshots` | Point-in-time system state captures (indexes, tables, sequences, system) |
-| `sage.findings` | Detected issues with severity, recommendation, and remediation SQL |
-| `sage.action_log` | Audit trail for every autonomous action with rollback metadata |
-| `sage.explain_cache` | Cached EXPLAIN plans keyed by queryid |
-| `sage.briefings` | Generated briefing reports with delivery status |
-| `sage.config` | Extension configuration overrides |
-| `sage.mcp_log` | Audit log of MCP sidecar requests |
-
----
-
-## Circuit Breaker
-
-pg_sage includes a circuit breaker that protects your database from runaway analysis or action loops:
-
-- **Separate breakers** for database operations and LLM calls
-- Trips automatically when error thresholds are exceeded
-- `sage.emergency_stop()` trips both breakers immediately
-- `sage.resume()` resets breakers and resumes normal operation
-
----
-
-## Installation
-
-### Prerequisites
-
-- PostgreSQL 14, 15, 16, or 17
-- `pg_stat_statements` extension
-- `libcurl` development headers (extension only, for optional LLM integration)
-
-### Docker (recommended for extension mode)
-
-```bash
-docker compose up
-```
-
-The included `docker-compose.yml` configures `shared_preload_libraries`, `pg_stat_statements`, and default GUCs automatically.
-
-### Extension from Source
-
-```bash
-make
-sudo make install
-```
-
-Add to `postgresql.conf`:
-
-```
-shared_preload_libraries = 'pg_stat_statements,pg_sage'
-sage.database = 'postgres'
-```
-
-Restart PostgreSQL, then:
-
-```sql
-CREATE EXTENSION pg_stat_statements;
-CREATE EXTENSION pg_sage;
-```
-
-### Standalone Sidecar
-
-No extension installation needed. Build the Go binary and point it at your database:
-
-```bash
-cd sidecar
-go build -o sage-sidecar ./cmd/pg_sage_sidecar
-./sage-sidecar --config config.yaml
-```
-
-The sidecar creates the `sage` schema and required tables on first startup.
+## Verified Platforms
+
+| Platform | PG Versions | Status | Code Changes |
+|----------|-------------|--------|-------------|
+| Google Cloud SQL | 14, 15, 16, 17 | ✅ 240 tests, 39 findings, 13 executor actions | Zero |
+| Google AlloyDB | 17 | ✅ 23 findings, full parity | Zero |
+| Self-managed | 14, 15, 16, 17 | ✅ 32 findings, 0 bugs | Zero |
+| Amazon Aurora | 14–17 | Test plan ready | — |
+| Amazon RDS | 14–17 | Test plan ready | — |
 
 ---
 
 ## Testing
 
-### Extension Tests
-
-| Suite | Tests | Purpose |
-|---|---|---|
-| `test/regression.sql` | 27 | Core functionality and schema validation |
-| `test/run_tests.sql` | 14 | Integration tests across tiers |
-| `test/test_all_features.sql` | -- | Comprehensive feature coverage (all tiers) |
+240 tests across 13 packages, 0 failures.
 
 ```bash
-docker exec -i pg_sage-pg_sage-1 psql -U postgres < test/test_all_features.sql
-docker exec -i pg_sage-pg_sage-1 psql -U postgres < test/regression.sql
+cd sidecar
+go test ./... -count=1 -timeout 300s
 ```
 
-### Sidecar Tests
-
-```bash
-cd sidecar && go test -v ./...
-```
-
-### CI Matrix
-
-The CI pipeline tests the extension against PostgreSQL 14, 15, 16, and 17.
+| Package | Tests | What It Covers |
+|---------|-------|---------------|
+| `internal/optimizer` | 144 | 26 features: validation, confidence, fingerprinting, cost, HypoPG, plans, detection |
+| `internal/llm` | 28 | Chat, budget, circuit breaker, timeout, dual-model Manager |
+| `internal/schema` | 15 | Bootstrap, migrations, advisory lock, idempotent restart |
+| `sidecar` (root) | 11 | MCP, SSE, Prometheus |
+| `internal/collector` | 11 | SQL variants, circuit breaker, snapshot categories |
+| `internal/briefing` | 11 | Generate with live findings |
+| `internal/ha` | 10 | Advisory lock, recovery detection |
+| `internal/config` | 9 | Defaults, precedence, hot-reload, validation |
+| `internal/retention` | 6 | Purge old snapshots, clean stale findings |
+| `internal/analyzer` | 5 | Bloat, plan time, regression, slow queries |
+| `internal/startup` | 5 | Prereq checks, version detection, plan_time columns |
+| `internal/executor` | 4 | Trust gates (12 subtests), CONCURRENTLY, categorize |
 
 ---
 
-## File Structure
+## Configuration
+
+### YAML (sidecar)
+
+See [`cloudsqltests/config_test.example.yaml`](cloudsqltests/config_test.example.yaml) for a complete example.
+
+Key settings:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `trust.level` | `observation` | Trust tier: `observation`, `advisory`, `autonomous` |
+| `collector.interval_seconds` | `60` | Seconds between snapshot collections |
+| `analyzer.interval_seconds` | `120` | Seconds between analysis cycles |
+| `llm.enabled` | `false` | Enable LLM-powered features |
+| `llm.optimizer.enabled` | `false` | Enable index optimizer |
+| `llm.optimizer.min_query_calls` | `100` | Minimum query calls before optimizing a table |
+| `llm.optimizer.max_new_per_table` | `3` | Max new indexes recommended per table per cycle |
+| `postgres.max_connections` | `5` | Connection pool size |
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `SAGE_DATABASE_URL` | PostgreSQL connection string (overrides YAML) |
+| `SAGE_GEMINI_API_KEY` | Gemini API key |
+| `SAGE_OPTIMIZER_LLM_API_KEY` | Separate API key for optimizer model (optional) |
+
+---
+
+## MCP Integration
+
+Connect Claude Desktop (or any MCP client) to `http://localhost:8080/sse`:
+
+```json
+{
+  "mcpServers": {
+    "pg_sage": {
+      "url": "http://localhost:8080/sse"
+    }
+  }
+}
+```
+
+Available tools: `sage_status`, `sage_analyze`, `sage_explain`, `sage_briefing`, `sage_diagnose`.
+
+Ask questions like:
+- "What are my slowest queries?"
+- "Show me duplicate indexes"
+- "Why is my application slow?"
+- "What maintenance does my database need?"
+
+---
+
+## Prometheus Metrics
+
+Scrape `http://localhost:9187/metrics`:
+
+```
+pg_sage_findings_total{severity="critical|warning|info"}
+pg_sage_collector_last_run_timestamp
+pg_sage_connection_up
+pg_sage_llm_calls_total{model,purpose}
+pg_sage_llm_circuit_open{model}
+pg_sage_optimizer_recommendations_total{action_level}
+pg_sage_executor_actions_total{outcome}
+pg_sage_database_size_bytes
+```
+
+---
+
+## Project Structure
 
 ```
 pg_sage/
-├── Dockerfile
-├── Makefile
-├── docker-compose.yml
-├── pg_sage.control
-├── include/
-│   └── pg_sage.h                     # Shared header
-├── sql/
-│   ├── pg_sage--0.5.0.sql            # Full install SQL for v0.5.0
-│   ├── pg_sage--0.1.0.sql            # Legacy install SQL
-│   └── pg_sage--0.1.0--0.5.0.sql     # Migration path
-├── src/
-│   ├── pg_sage.c                     # Entry point, shared memory, worker registration
-│   ├── guc.c                         # GUC definitions with check hooks
-│   ├── collector.c                   # Snapshot collection background worker
-│   ├── analyzer.c                    # Rules engine, analysis loop, adaptive scheduling
-│   ├── analyzer_extra.c             # Vacuum/bloat, security, replication analysis
-│   ├── action_executor.c            # Tier 3 action execution with trust gating
-│   ├── ddl_worker.c                 # Background DDL execution worker
-│   ├── briefing.c                   # Briefing generation, diagnose, explain narrative
-│   ├── tier2_extra.c               # Cost attribution, migration review, schema design
-│   ├── context.c                    # Context assembly for LLM prompts
-│   ├── llm.c                       # LLM HTTP integration (libcurl)
-│   ├── mcp_helpers.c               # JSONB SQL functions for MCP sidecar
-│   ├── circuit_breaker.c           # Circuit breaker implementation
-│   ├── explain_capture.c           # EXPLAIN plan capture and caching
-│   ├── autoexplain_hook.c          # auto_explain hook integration
-│   ├── findings.c                  # Finding creation and management
-│   ├── ha.c                        # High availability awareness
-│   ├── self_monitor.c              # Self-monitoring checks
-│   └── utils.c                     # SPI utilities, JSON helpers
-├── sidecar/
-│   ├── Dockerfile                   # Multi-stage Go build
-│   ├── config.example.yaml          # Full configuration reference
-│   ├── go.mod
-│   ├── cmd/
-│   │   └── pg_sage_sidecar/         # CLI entry point
+├── sidecar/                        ← THE PRODUCT
+│   ├── cmd/pg_sage_sidecar/        # Entry point
 │   ├── internal/
-│   │   ├── analyzer/                # Standalone rules engine
-│   │   ├── briefing/                # Briefing generation
-│   │   ├── collector/               # Catalog snapshot collector
-│   │   ├── config/                  # YAML config + hot-reload
-│   │   ├── executor/                # Action executor with trust gating
-│   │   ├── ha/                      # HA awareness (standby detection)
-│   │   ├── llm/                     # LLM client (OpenAI-compatible)
-│   │   ├── retention/               # Data retention policies
-│   │   ├── schema/                  # Schema introspection queries
-│   │   └── startup/                 # First-run schema bootstrap
-│   ├── main.go                      # HTTP server, SSE transport, session mgmt
-│   ├── mcp.go                       # MCP protocol types and JSON-RPC dispatcher
-│   ├── resources.go                 # MCP resource handlers
-│   ├── tools.go                     # MCP tool handlers
-│   ├── prompts.go                   # MCP prompt templates
-│   ├── prometheus.go                # Prometheus /metrics endpoint
-│   ├── auth.go                      # API key authentication
-│   ├── ratelimit.go                 # Per-IP rate limiting
-│   └── sidecar_test.go              # Sidecar integration tests
-├── test/
-│   ├── regression.sql
-│   ├── run_tests.sql
-│   └── test_all_features.sql
-├── grafana/
-│   └── pg_sage_dashboard.json
-├── docs/
-│   └── pg_sage_spec_v2.2.md
-└── docker-entrypoint-initdb.d/
+│   │   ├── analyzer/               # Tier 1 rules engine
+│   │   ├── briefing/               # LLM briefing generation
+│   │   ├── collector/              # Snapshot collection
+│   │   ├── config/                 # YAML config + hot-reload
+│   │   ├── executor/               # Tier 3 trust-gated DDL
+│   │   ├── ha/                     # Advisory lock, HA awareness
+│   │   ├── llm/                    # LLM client + dual-model Manager
+│   │   ├── optimizer/              # Index Optimizer v2 (18 files, 4,640 lines)
+│   │   ├── retention/              # Data retention + cleanup
+│   │   ├── schema/                 # Bootstrap + migrations
+│   │   └── startup/                # Prereq checks
+│   ├── resources.go                # MCP resources
+│   ├── tools.go                    # MCP tools
+│   └── go.mod
+├── extension/                      ← FROZEN (security fixes only)
+│   ├── src/                        # C extension (v0.6.0-rc3)
+│   ├── include/
+│   ├── sql/
+│   └── Makefile
+├── cloudsqltests/                  # GCP integration test infrastructure
+├── docs/                           # Architecture, walkthroughs
+└── grafana/                        # Dashboard templates
 ```
+
+### C Extension (Frozen)
+
+The C extension at `extension/` is frozen at v0.6.0-rc3. It works on self-managed PostgreSQL with auto-explain hooks and in-process SQL functions (`sage.explain()`, `sage.diagnose()`, `sage.briefing()`). No new features — security fixes only. The sidecar is the product.
 
 ---
 
-## Roadmap
+## How It Works
 
-- ~~**v0.5** -- C extension with MCP sidecar, JSONB SQL functions, Grafana dashboard~~ Done
-- **v0.7** (current) -- Standalone sidecar with full pipeline, Cloud SQL/AlloyDB/RDS/Aurora support, YAML config with hot-reload, DDL worker, GUC hardening, PG 14-17 CI matrix
-- **v1.0** -- Production hardening, pg_upgrade compatibility, PGXN publishing
+1. **Sidecar starts**, connects to PostgreSQL, acquires advisory lock `710190109` (`hashtext('pg_sage')`), bootstraps the `sage` schema
+2. **Collector** runs every 60s, captures snapshots from 10+ catalog views into `sage.snapshots`
+3. **Analyzer** runs every 120s, applies Tier 1 rules → generates findings → calls optimizer (if LLM enabled) → upserts all findings to `sage.findings`
+4. **Optimizer** (when enabled) groups queries by table, assembles enriched context (columns, pg_stats, plans, write rates), sends to LLM, validates every recommendation through 8 checks + HypoPG, scores confidence
+5. **Executor** reads actionable findings, checks trust gates (level × ramp × per-tier toggles × maintenance window × emergency stop × replica check), executes DDL on raw `pgx.Conn` with `CONCURRENTLY`, monitors for regression
+6. **MCP server** exposes findings and tools to Claude Desktop or any AI agent
+7. **Prometheus** exports metrics for monitoring and alerting
 
 ---
 
 ## License
 
-pg_sage is licensed under the [GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html).
+[GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html)
