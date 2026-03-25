@@ -1,0 +1,324 @@
+package schema
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// expectedTables lists every table the sage schema must contain.
+var expectedTables = []struct {
+	name string
+	ddl  string
+}{
+	{"action_log", ddlActionLog},
+	{"snapshots", ddlSnapshots},
+	{"findings", ddlFindings},
+	{"explain_cache", ddlExplainCache},
+	{"briefings", ddlBriefings},
+	{"config", ddlConfig},
+	{"mcp_log", ddlMCPLog},
+}
+
+// Bootstrap acquires an advisory lock, then ensures the sage schema and
+// all required tables exist. It never drops existing objects.
+func Bootstrap(ctx context.Context, pool *pgxpool.Pool) error {
+	if err := acquireAdvisoryLock(ctx, pool); err != nil {
+		return err
+	}
+
+	exists, err := schemaExists(ctx, pool)
+	if err != nil {
+		return fmt.Errorf("checking sage schema: %w", err)
+	}
+
+	if !exists {
+		return createFullSchema(ctx, pool)
+	}
+
+	return ensureTablesExist(ctx, pool)
+}
+
+// ReleaseAdvisoryLock releases the pg_sage advisory lock.
+func ReleaseAdvisoryLock(ctx context.Context, pool *pgxpool.Pool) {
+	qctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, _ = pool.Exec(qctx, "SELECT pg_advisory_unlock(hashtext('pg_sage'))")
+}
+
+// PersistTrustRampStart reads or initialises the trust_ramp_start
+// timestamp in sage.config, returning the effective start time.
+func PersistTrustRampStart(
+	ctx context.Context, pool *pgxpool.Pool,
+) (time.Time, error) {
+	qctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var raw string
+	err := pool.QueryRow(
+		qctx,
+		"SELECT value FROM sage.config WHERE key = 'trust_ramp_start'",
+	).Scan(&raw)
+	if err == nil {
+		// Try multiple timestamp formats PG may produce.
+		for _, layout := range []string{
+			time.RFC3339Nano,
+			"2006-01-02T15:04:05.999999-07",
+			"2006-01-02T15:04:05.999999-07:00",
+			"2006-01-02 15:04:05.999999-07",
+			"2006-01-02 15:04:05.999999-07:00",
+		} {
+			if t, parseErr := time.Parse(layout, raw); parseErr == nil {
+				return t, nil
+			}
+		}
+		return time.Time{}, fmt.Errorf(
+			"parsing trust_ramp_start %q: no matching format", raw,
+		)
+	}
+
+	// Key does not exist — insert now().
+	qctx2, cancel2 := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel2()
+
+	var t time.Time
+	err = pool.QueryRow(
+		qctx2,
+		"INSERT INTO sage.config (key, value, updated_by) "+
+			"VALUES ('trust_ramp_start', to_char(now(), 'YYYY-MM-DD\"T\"HH24:MI:SS.USOF'), 'bootstrap') "+
+			"ON CONFLICT (key) DO NOTHING "+
+			"RETURNING value::timestamptz",
+	).Scan(&t)
+	if err != nil {
+		// Race: another instance inserted between our SELECT and INSERT.
+		qctx3, cancel3 := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel3()
+		err = pool.QueryRow(
+			qctx3,
+			"SELECT value::timestamptz FROM sage.config "+
+				"WHERE key = 'trust_ramp_start'",
+		).Scan(&t)
+		if err != nil {
+			return time.Time{}, fmt.Errorf(
+				"reading trust_ramp_start after insert: %w", err,
+			)
+		}
+	}
+	return t, nil
+}
+
+func acquireAdvisoryLock(ctx context.Context, pool *pgxpool.Pool) error {
+	qctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var acquired bool
+	err := pool.QueryRow(
+		qctx,
+		"SELECT pg_try_advisory_lock(hashtext('pg_sage'))",
+	).Scan(&acquired)
+	if err != nil {
+		return fmt.Errorf("advisory lock query failed: %w", err)
+	}
+	if !acquired {
+		return fmt.Errorf(
+			"another pg_sage instance holds the advisory lock",
+		)
+	}
+	return nil
+}
+
+func schemaExists(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
+	qctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var one int
+	err := pool.QueryRow(
+		qctx,
+		"SELECT 1 FROM information_schema.schemata "+
+			"WHERE schema_name = 'sage'",
+	).Scan(&one)
+	if err != nil {
+		return false, nil
+	}
+	return true, nil
+}
+
+func createFullSchema(ctx context.Context, pool *pgxpool.Pool) error {
+	qctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	tx, err := pool.Begin(qctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(qctx)
+
+	_, err = tx.Exec(qctx, fullSchemaDDL)
+	if err != nil {
+		return fmt.Errorf(
+			"executing schema DDL: %w\n"+
+				"hint: if the user lacks CREATE privilege, "+
+				"run as superuser: CREATE SCHEMA sage; "+
+				"GRANT ALL ON SCHEMA sage TO sage_agent;", err)
+	}
+
+	return tx.Commit(qctx)
+}
+
+func ensureTablesExist(ctx context.Context, pool *pgxpool.Pool) error {
+	qctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	for _, tbl := range expectedTables {
+		var one int
+		err := pool.QueryRow(
+			qctx,
+			"SELECT 1 FROM information_schema.tables "+
+				"WHERE table_schema = 'sage' AND table_name = $1",
+			tbl.name,
+		).Scan(&one)
+		if err != nil {
+			// Table missing — create it.
+			_, execErr := pool.Exec(qctx, tbl.ddl)
+			if execErr != nil {
+				return fmt.Errorf("creating table sage.%s: %w", tbl.name, execErr)
+			}
+		}
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// DDL constants
+// ---------------------------------------------------------------------------
+
+const fullSchemaDDL = `
+CREATE SCHEMA sage;
+` + ddlActionLog + ddlSnapshots + ddlFindings +
+	ddlExplainCache + ddlBriefings + ddlConfig + ddlMCPLog
+
+const ddlActionLog = `
+CREATE TABLE IF NOT EXISTS sage.action_log (
+    id              bigserial PRIMARY KEY,
+    executed_at     timestamptz NOT NULL DEFAULT now(),
+    action_type     text NOT NULL,
+    finding_id      bigint,
+    sql_executed    text NOT NULL,
+    rollback_sql    text,
+    before_state    jsonb,
+    after_state     jsonb,
+    outcome         text NOT NULL DEFAULT 'pending',
+    rollback_reason text,
+    measured_at     timestamptz
+);
+CREATE INDEX IF NOT EXISTS idx_action_log_time
+    ON sage.action_log (executed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_action_log_finding
+    ON sage.action_log (finding_id)
+    WHERE finding_id IS NOT NULL;
+`
+
+const ddlSnapshots = `
+CREATE TABLE IF NOT EXISTS sage.snapshots (
+    id              bigserial PRIMARY KEY,
+    collected_at    timestamptz NOT NULL DEFAULT now(),
+    category        text NOT NULL,
+    data            jsonb NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_snapshots_time
+    ON sage.snapshots (collected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_snapshots_category
+    ON sage.snapshots (category, collected_at DESC);
+`
+
+const ddlFindings = `
+CREATE TABLE IF NOT EXISTS sage.findings (
+    id                  bigserial PRIMARY KEY,
+    created_at          timestamptz NOT NULL DEFAULT now(),
+    last_seen           timestamptz NOT NULL DEFAULT now(),
+    occurrence_count    integer NOT NULL DEFAULT 1,
+    category            text NOT NULL,
+    severity            text NOT NULL,
+    object_type         text,
+    object_identifier   text,
+    title               text NOT NULL,
+    detail              jsonb NOT NULL,
+    recommendation      text,
+    recommended_sql     text,
+    rollback_sql        text,
+    estimated_cost_usd  numeric(10,2),
+    status              text NOT NULL DEFAULT 'open',
+    suppressed_until    timestamptz,
+    resolved_at         timestamptz,
+    acted_on_at         timestamptz,
+    action_log_id       bigint REFERENCES sage.action_log(id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_findings_dedup
+    ON sage.findings (category, object_identifier)
+    WHERE status = 'open';
+CREATE INDEX IF NOT EXISTS idx_findings_status
+    ON sage.findings (status, severity, last_seen DESC);
+CREATE INDEX IF NOT EXISTS idx_findings_object
+    ON sage.findings (object_identifier, category);
+CREATE INDEX IF NOT EXISTS idx_findings_category_status
+    ON sage.findings (category, severity)
+    WHERE status = 'open';
+`
+
+const ddlExplainCache = `
+CREATE TABLE IF NOT EXISTS sage.explain_cache (
+    id              bigserial PRIMARY KEY,
+    captured_at     timestamptz NOT NULL DEFAULT now(),
+    queryid         bigint NOT NULL,
+    query_text      text,
+    plan_json       jsonb NOT NULL,
+    source          text NOT NULL,
+    total_cost      float,
+    execution_time  float
+);
+CREATE INDEX IF NOT EXISTS idx_explain_queryid
+    ON sage.explain_cache (queryid, captured_at DESC);
+`
+
+const ddlBriefings = `
+CREATE TABLE IF NOT EXISTS sage.briefings (
+    id              bigserial PRIMARY KEY,
+    generated_at    timestamptz NOT NULL DEFAULT now(),
+    period_start    timestamptz NOT NULL,
+    period_end      timestamptz NOT NULL,
+    mode            text NOT NULL,
+    content_text    text NOT NULL,
+    content_json    jsonb NOT NULL,
+    llm_used        boolean NOT NULL DEFAULT false,
+    token_count     integer,
+    delivery_status jsonb
+);
+`
+
+const ddlConfig = `
+CREATE TABLE IF NOT EXISTS sage.config (
+    key             text PRIMARY KEY,
+    value           text NOT NULL,
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    updated_by      text
+);
+`
+
+const ddlMCPLog = `
+CREATE TABLE IF NOT EXISTS sage.mcp_log (
+    id              bigserial PRIMARY KEY,
+    ts              timestamptz NOT NULL DEFAULT now(),
+    client_ip       text,
+    method          text,
+    resource_uri    text,
+    tool_name       text,
+    tokens_used     int DEFAULT 0,
+    duration_ms     int DEFAULT 0,
+    status          text,
+    error_message   text
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_log_client
+    ON sage.mcp_log (client_ip, ts DESC);
+`

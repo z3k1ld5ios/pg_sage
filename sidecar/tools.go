@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -60,7 +61,20 @@ var toolCatalogue = []Tool{
 // Tool dispatcher
 // ---------------------------------------------------------------------------
 
+// Per-tool timeouts. LLM-backed tools get 120s; others 30s.
+var toolTimeouts = map[string]time.Duration{
+	"diagnose":         120 * time.Second,
+	"briefing":         120 * time.Second,
+	"suggest_index":    120 * time.Second,
+	"review_migration": 120 * time.Second,
+}
+
 func callTool(ctx context.Context, name string, args json.RawMessage) (ToolsCallResult, error) {
+	if timeout, ok := toolTimeouts[name]; ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	switch name {
 	case "diagnose":
 		return toolDiagnose(ctx, args)
@@ -100,7 +114,7 @@ func toolDiagnose(ctx context.Context, args json.RawMessage) (ToolsCallResult, e
 			"and the suggest_index / review_migration tools."), nil
 	}
 
-	result, err := queryTextFallback(ctx,
+	result, err := queryTextFallback(ctx, "tool:diagnose",
 		"SELECT sage.diagnose($1)", []any{p.Question},
 		"SELECT 'sage.diagnose() not available — ensure pg_sage extension is loaded'", nil,
 	)
@@ -117,7 +131,7 @@ func toolBriefing(ctx context.Context) (ToolsCallResult, error) {
 			"Use the sage://health resource for a basic health overview instead."), nil
 	}
 
-	result, err := queryTextFallback(ctx,
+	result, err := queryTextFallback(ctx, "tool:briefing",
 		"SELECT sage.briefing()", nil,
 		"SELECT 'sage.briefing() not available — ensure pg_sage extension is loaded'", nil,
 	)
@@ -140,7 +154,7 @@ func toolSuggestIndex(ctx context.Context, args json.RawMessage) (ToolsCallResul
 
 	if extensionAvailable {
 		question := "suggest indexes for table " + sanitize(p.Table)
-		result, err := queryTextFallback(ctx,
+		result, err := queryTextFallback(ctx, "tool:suggest_index",
 			"SELECT sage.diagnose($1)", []any{question},
 			"SELECT 'sage.diagnose() not available'", nil,
 		)
@@ -153,8 +167,8 @@ func toolSuggestIndex(ctx context.Context, args json.RawMessage) (ToolsCallResul
 	// Sidecar-only: analyze pg_stat_user_tables for sequential scan patterns
 	t := sanitize(p.Table)
 	var result string
-	err := pool.QueryRow(ctx, fmt.Sprintf(`SELECT json_build_object(
-		'table', '%s',
+	err := pool.QueryRow(ctx, `SELECT json_build_object(
+		'table', $1::text,
 		'mode', 'sidecar-only',
 		'analysis', json_build_object(
 			'seq_scan', s.seq_scan,
@@ -169,7 +183,7 @@ func toolSuggestIndex(ctx context.Context, args json.RawMessage) (ToolsCallResul
 		'existing_indexes', (
 			SELECT coalesce(json_agg(json_build_object('name', indexname, 'def', indexdef)), '[]'::json)
 			FROM pg_indexes
-			WHERE schemaname || '.' || tablename = '%s' OR tablename = '%s'
+			WHERE schemaname || '.' || tablename = $1::text OR tablename = $1::text
 		),
 		'recommendation', CASE
 			WHEN s.seq_scan > 1000 AND s.n_live_tup > 10000 AND coalesce(s.idx_scan,0) < s.seq_scan
@@ -180,8 +194,8 @@ func toolSuggestIndex(ctx context.Context, args json.RawMessage) (ToolsCallResul
 		END
 	)::text
 	FROM pg_stat_user_tables s
-	WHERE s.schemaname || '.' || s.relname = '%s' OR s.relname = '%s'
-	LIMIT 1`, t, t, t, t, t)).Scan(&result)
+	WHERE s.schemaname || '.' || s.relname = $1::text OR s.relname = $1::text
+	LIMIT 1`, t).Scan(&result)
 	if err != nil {
 		return toolErr(fmt.Sprintf("could not analyze table %s: %v", t, err)), nil
 	}
@@ -201,7 +215,7 @@ func toolReviewMigration(ctx context.Context, args json.RawMessage) (ToolsCallRe
 
 	if extensionAvailable {
 		question := "review this migration: " + p.DDL
-		result, err := queryTextFallback(ctx,
+		result, err := queryTextFallback(ctx, "tool:review_migration",
 			"SELECT sage.diagnose($1)", []any{question},
 			"SELECT 'sage.diagnose() not available'", nil,
 		)
@@ -269,18 +283,20 @@ func reviewDDLSafety(ddl string) map[string]any {
 // Helpers
 // ---------------------------------------------------------------------------
 
-func queryTextFallback(ctx context.Context, primary string, primaryArgs []any, fallback string, fallbackArgs []any) (string, error) {
+func queryTextFallback(ctx context.Context, component, primary string, primaryArgs []any, fallback string, fallbackArgs []any) (string, error) {
 	var result string
 	err := pool.QueryRow(ctx, primary, primaryArgs...).Scan(&result)
 	if err == nil {
 		return result, nil
 	}
+	logWarn(component, "primary query failed: %v, trying fallback", err)
 	if fallbackArgs == nil {
 		fallbackArgs = []any{}
 	}
 	err2 := pool.QueryRow(ctx, fallback, fallbackArgs...).Scan(&result)
 	if err2 != nil {
-		return "", fmt.Errorf("primary: %v; fallback: %v", err, err2)
+		logError(component, "fallback also failed: %v", err2)
+		return "", fmt.Errorf("%s: primary: %v; fallback: %v", component, err, err2)
 	}
 	return result, nil
 }

@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -42,9 +43,8 @@ type Config struct {
 	DatabaseURL    string
 	MCPPort        string
 	PrometheusPort string
-	RateLimit      int
-	TokenBudget    int
-	APIKey         string
+	RateLimit int
+	APIKey    string
 	TLSCert        string
 	TLSKey         string
 	PGMaxConns     int32
@@ -56,13 +56,12 @@ func loadConfig() Config {
 		DatabaseURL:    envOrDefault("SAGE_DATABASE_URL", "postgres://postgres@localhost:5432/postgres?sslmode=disable"),
 		MCPPort:        envOrDefault("SAGE_MCP_PORT", "5433"),
 		PrometheusPort: envOrDefault("SAGE_PROMETHEUS_PORT", "9187"),
-		RateLimit:      envOrDefaultInt("SAGE_RATE_LIMIT", 60),
-		TokenBudget:    envOrDefaultInt("SAGE_TOKEN_BUDGET", 10000),
-		APIKey:         os.Getenv("SAGE_API_KEY"),
+		RateLimit: envOrDefaultInt("SAGE_RATE_LIMIT", 60),
+		APIKey:    os.Getenv("SAGE_API_KEY"),
 		TLSCert:        os.Getenv("SAGE_TLS_CERT"),
 		TLSKey:         os.Getenv("SAGE_TLS_KEY"),
-		PGMaxConns:     int32(envOrDefaultInt("SAGE_PG_MAX_CONNS", 5)),
-		PGMinConns:     int32(envOrDefaultInt("SAGE_PG_MIN_CONNS", 1)),
+		PGMaxConns: int32(envOrDefaultInt("SAGE_PG_MAX_CONNS", 10)),
+		PGMinConns: int32(envOrDefaultInt("SAGE_PG_MIN_CONNS", 2)),
 	}
 	return cfg
 }
@@ -136,6 +135,9 @@ func main() {
 	}
 	poolCfg.MaxConns = cfg.PGMaxConns
 	poolCfg.MinConns = cfg.PGMinConns
+	poolCfg.MaxConnLifetime = 30 * time.Minute
+	poolCfg.MaxConnIdleTime = 5 * time.Minute
+	poolCfg.HealthCheckPeriod = 30 * time.Second
 
 	pool, err = pgxpool.NewWithConfig(context.Background(), poolCfg)
 	if err != nil {
@@ -258,12 +260,12 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 }
 
 // ---------------------------------------------------------------------------
-// Request timeout middleware (30s per MCP request)
+// Request timeout middleware (180s safety net; per-tool timeouts in tools.go)
 // ---------------------------------------------------------------------------
 
 func requestTimeoutMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 180*time.Second)
 		defer cancel()
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -405,7 +407,7 @@ func handleSSE(w http.ResponseWriter, r *http.Request) {
 
 	sessionID := uuid.New().String()
 	sess := &sseSession{
-		ch:   make(chan []byte, 64),
+		ch:   make(chan []byte, 256),
 		done: make(chan struct{}),
 	}
 	sessions.Store(sessionID, sess)
@@ -483,12 +485,16 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send response on SSE stream
+	// Send response on SSE stream with blocking write + timeout
 	data, _ := json.Marshal(resp)
 	select {
 	case sess.ch <- data:
-	default:
-		logWarn("mcp", "session %s buffer full, dropping response", sessionID)
+		// sent
+	case <-time.After(10 * time.Second):
+		logWarn("mcp", "session %s: write timeout after 10s, dropping response (buf=%d)",
+			sessionID, len(sess.ch))
+	case <-sess.done:
+		logWarn("mcp", "session %s: closed before response sent", sessionID)
 	}
 
 	// Also return 202 to the POST caller
@@ -593,12 +599,24 @@ func validateResourceURI(uri string) error {
 	switch {
 	case uri == "sage://health", uri == "sage://findings", uri == "sage://slow-queries":
 		return nil
-	case len(uri) > 14 && uri[:14] == "sage://schema/":
-		return validateTableName(uri[14:])
-	case len(uri) > 13 && uri[:13] == "sage://stats/":
-		return validateTableName(uri[13:])
-	case len(uri) > 15 && uri[:15] == "sage://explain/":
-		return validateQueryID(uri[15:])
+	case strings.HasPrefix(uri, "sage://schema/"):
+		table := strings.TrimPrefix(uri, "sage://schema/")
+		if table == "" {
+			return fmt.Errorf("table name required in sage://schema/{table}")
+		}
+		return validateTableName(table)
+	case strings.HasPrefix(uri, "sage://stats/"):
+		table := strings.TrimPrefix(uri, "sage://stats/")
+		if table == "" {
+			return fmt.Errorf("table name required in sage://stats/{table}")
+		}
+		return validateTableName(table)
+	case strings.HasPrefix(uri, "sage://explain/"):
+		qid := strings.TrimPrefix(uri, "sage://explain/")
+		if qid == "" {
+			return fmt.Errorf("queryid required in sage://explain/{queryid}")
+		}
+		return validateQueryID(qid)
 	default:
 		return fmt.Errorf("unknown resource URI: %s", uri)
 	}

@@ -1,0 +1,102 @@
+# pg_sage Standalone Sidecar Configuration — v0.7.0
+# Copy to config.yaml and edit. All values shown are defaults.
+# Precedence: CLI flags > environment variables > this file > built-in defaults.
+# Environment variable expansion: use ${VAR_NAME} syntax in values.
+
+mode: standalone  # "extension" (read from C extension) or "standalone" (full pipeline)
+
+postgres:
+  host: localhost
+  port: 5432
+  user: sage_agent
+  password: ${SAGE_PG_PASSWORD}
+  database: postgres
+  sslmode: prefer
+  max_connections: 2        # Keep low — sage should never compete with app traffic
+  # database_url: ""        # Overrides individual fields above if set
+
+collector:
+  interval_seconds: 60     # How often to snapshot catalog views
+  batch_size: 1000          # Keyset pagination batch for large table lists
+
+analyzer:
+  interval_seconds: 600    # How often to run the rules engine
+  slow_query_threshold_ms: 1000
+  seq_scan_min_rows: 100000
+  unused_index_window_days: 30
+  index_bloat_threshold_pct: 30
+  table_bloat_dead_tuple_pct: 20
+  table_bloat_min_rows: 1000         # Skip bloat checks for tiny tables
+  idle_in_transaction_timeout_minutes: 30
+  cache_hit_ratio_warning: 0.95
+  xid_wraparound_warning: 500000000
+  xid_wraparound_critical: 1000000000
+  regression_threshold_pct: 50
+  regression_lookback_days: 7
+  checkpoint_frequency_warning_per_hour: 12
+
+safety:
+  cpu_ceiling_pct: 90           # active_backends / max_connections threshold
+  query_timeout_ms: 500         # Collector/analyzer query timeout
+  ddl_timeout_seconds: 300      # Tier 3 DDL timeout (CREATE INDEX, etc.)
+  disk_pressure_threshold_pct: 5
+  backoff_consecutive_skips: 3  # Skips before entering dormant mode
+  dormant_interval_seconds: 600 # Collection interval when dormant
+
+trust:
+  level: observation            # observation | advisory | autonomous
+  ramp_start: ""                # Auto-persisted to sage.config on first start
+  maintenance_window: ""        # Cron+TZ: "0 2 * * 6 America/Chicago"
+  tier3_safe: true              # Drop unused/invalid indexes, kill idle sessions
+  tier3_moderate: false         # Create indexes, reindex — requires maintenance_window
+  tier3_high_risk: false        # Always false in standalone mode
+  rollback_threshold_pct: 10    # Regression % that triggers auto-rollback
+  rollback_window_minutes: 15   # Time to wait before checking regression
+  rollback_cooldown_days: 7     # Days to skip re-executing a rolled-back action
+
+llm:
+  enabled: false
+  endpoint: ""                  # OpenAI-compatible endpoint (e.g., https://api.openai.com/v1)
+  api_key: ${SAGE_LLM_API_KEY}
+  model: ""                     # e.g., gpt-4o, gemini-2.5-flash-preview
+  timeout_seconds: 30
+  token_budget_daily: 50000
+  context_budget_tokens: 4096
+  cooldown_seconds: 300         # Circuit breaker cooldown after 3 failures
+  index_optimizer:
+    enabled: false              # Enable LLM-powered index recommendations
+    min_query_calls: 100        # Min calls before a query is considered
+    max_indexes_per_table: 10   # Skip table if already has this many indexes
+    max_include_columns: 3      # Max INCLUDE columns per recommendation
+    over_indexed_ratio_pct: 150 # Index bytes > 150% of table bytes = over-indexed
+    write_heavy_ratio_pct: 70   # Skip table if >70% of ops are writes
+
+briefing:
+  schedule: "0 6 * * *"
+  channels: ["stdout"]          # stdout, slack
+  slack_webhook_url: ""
+
+retention:
+  snapshots_days: 90
+  findings_days: 180
+  actions_days: 365
+  explains_days: 90
+
+mcp:
+  enabled: true
+  listen_addr: "0.0.0.0:5433"
+
+prometheus:
+  listen_addr: "0.0.0.0:9187"
+
+# Hot-reloadable fields (change without restart):
+#   collector.interval_seconds, collector.batch_size
+#   analyzer.* (all thresholds)
+#   safety.* (all thresholds)
+#   trust.level, trust.tier3_safe, trust.tier3_moderate, trust.maintenance_window
+#   llm.* (all settings)
+#   briefing.schedule
+#   retention.* (all settings)
+#
+# Non-hot-reloadable (require restart):
+#   mode, postgres.*, mcp.listen_addr, prometheus.listen_addr

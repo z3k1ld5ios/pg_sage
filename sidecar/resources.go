@@ -85,14 +85,14 @@ func readHealth(ctx context.Context) (string, error) {
 
 func readFindings(ctx context.Context) (string, error) {
 	if extensionAvailable {
-		result, err := queryJSONFallback(ctx,
-			"SELECT sage.findings_json('open')",
+		result, err := queryJSONFallback(ctx, "resource:findings",
+			"SELECT sage.findings_json('open')", nil,
 			`SELECT coalesce(
 				(SELECT json_agg(row_to_json(f))
 				 FROM sage.findings f
 				 WHERE f.status = 'open'),
 				'[]'::json
-			)::text`,
+			)::text`, nil,
 		)
 		if err != nil {
 			return "", err
@@ -116,9 +116,9 @@ func annotateAlterSystemForCloud(text string) string {
 
 func readSlowQueries(ctx context.Context) (string, error) {
 	if extensionAvailable {
-		return queryJSONFallback(ctx,
-			"SELECT sage.slow_queries_json()",
-			fallbackSlowQueriesSQL,
+		return queryJSONFallback(ctx, "resource:slow-queries",
+			"SELECT sage.slow_queries_json()", nil,
+			fallbackSlowQueriesSQL, nil,
 		)
 	}
 	return queryJSON(ctx, fallbackSlowQueriesSQL)
@@ -139,14 +139,15 @@ const fallbackSlowQueriesSQL = `SELECT coalesce(
 func readSchema(ctx context.Context, table string) (string, error) {
 	t := sanitize(table)
 	if extensionAvailable {
-		result, err := queryJSON(ctx, fmt.Sprintf("SELECT sage.schema_json('%s')", t))
+		result, err := queryJSON(ctx,
+			"SELECT sage.schema_json($1::text)", t)
 		if err == nil {
 			return result, nil
 		}
-		// fall through to direct catalog query
+		logWarn("resource:schema", "sage.schema_json failed for %s, using catalog: %v", t, err)
 	}
-	return queryJSON(ctx, fmt.Sprintf(`SELECT json_build_object(
-		'table', '%s',
+	return queryJSON(ctx, `SELECT json_build_object(
+		'table', $1::text,
 		'columns', (
 			SELECT coalesce(json_agg(json_build_object(
 				'name', column_name,
@@ -156,8 +157,8 @@ func readSchema(ctx context.Context, table string) (string, error) {
 				'ordinal_position', ordinal_position
 			) ORDER BY ordinal_position), '[]'::json)
 			FROM information_schema.columns
-			WHERE table_schema || '.' || table_name = '%s'
-			   OR table_name = '%s'
+			WHERE table_schema || '.' || table_name = $1::text
+			   OR table_name = $1::text
 		),
 		'indexes', (
 			SELECT coalesce(json_agg(json_build_object(
@@ -165,8 +166,8 @@ func readSchema(ctx context.Context, table string) (string, error) {
 				'def', indexdef
 			)), '[]'::json)
 			FROM pg_indexes
-			WHERE schemaname || '.' || tablename = '%s'
-			   OR tablename = '%s'
+			WHERE schemaname || '.' || tablename = $1::text
+			   OR tablename = $1::text
 		),
 		'constraints', (
 			SELECT coalesce(json_agg(json_build_object(
@@ -177,28 +178,29 @@ func readSchema(ctx context.Context, table string) (string, error) {
 			FROM pg_constraint con
 			JOIN pg_class rel ON rel.oid = con.conrelid
 			JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
-			WHERE nsp.nspname || '.' || rel.relname = '%s'
-			   OR rel.relname = '%s'
+			WHERE nsp.nspname || '.' || rel.relname = $1::text
+			   OR rel.relname = $1::text
 		),
 		'row_estimate', (
 			SELECT reltuples::bigint
 			FROM pg_class
-			WHERE relname = split_part('%s', '.', CASE WHEN position('.' in '%s') > 0 THEN 2 ELSE 1 END)
+			WHERE relname = split_part($1::text, '.', CASE WHEN position('.' in $1::text) > 0 THEN 2 ELSE 1 END)
 			LIMIT 1
 		)
-	)::text`, t, t, t, t, t, t, t, t, t))
+	)::text`, t)
 }
 
 func readStats(ctx context.Context, table string) (string, error) {
 	t := sanitize(table)
 	if extensionAvailable {
-		result, err := queryJSON(ctx, fmt.Sprintf("SELECT sage.stats_json('%s')", t))
+		result, err := queryJSON(ctx,
+			"SELECT sage.stats_json($1::text)", t)
 		if err == nil {
 			return result, nil
 		}
-		// fall through to direct catalog query
+		logWarn("resource:stats", "sage.stats_json failed for %s, using catalog: %v", t, err)
 	}
-	return queryJSON(ctx, fmt.Sprintf(`SELECT row_to_json(s)::text
+	return queryJSON(ctx, `SELECT row_to_json(s)::text
 	FROM (
 		SELECT relname, schemaname, seq_scan, seq_tup_read, idx_scan, idx_tup_fetch,
 		       n_tup_ins, n_tup_upd, n_tup_del, n_live_tup, n_dead_tup,
@@ -208,24 +210,28 @@ func readStats(ctx context.Context, table string) (string, error) {
 		       pg_size_pretty(pg_relation_size(schemaname || '.' || relname)) AS table_size,
 		       pg_size_pretty(pg_indexes_size(schemaname || '.' || relname)) AS index_size
 		FROM pg_stat_user_tables
-		WHERE schemaname || '.' || relname = '%s'
-		   OR relname = '%s'
+		WHERE schemaname || '.' || relname = $1::text
+		   OR relname = $1::text
 		LIMIT 1
-	) s`, t, t))
+	) s`, t)
 }
 
 func readExplain(ctx context.Context, queryid string) (string, error) {
 	qid := sanitize(queryid)
 	if extensionAvailable {
-		return queryJSONFallback(ctx,
-			fmt.Sprintf("SELECT sage.explain_json('%s')", qid),
-			fmt.Sprintf(`SELECT coalesce(
-				(SELECT plan::text FROM sage.explain_cache WHERE queryid = '%s' ORDER BY captured_at DESC LIMIT 1),
+		result, err := queryJSONFallback(ctx, "resource:explain",
+			"SELECT coalesce(sage.explain_json($1), '{\"error\":\"no cached plan\"}')", []any{qid},
+			`SELECT coalesce(
+				(SELECT plan_json::text FROM sage.explain_cache WHERE queryid = $1::bigint ORDER BY captured_at DESC LIMIT 1),
 				'{"error":"no cached plan found"}'
-			)`, qid),
+			)`, []any{qid},
 		)
+		if err != nil {
+			logWarn("resource:explain", "failed for queryid=%s: %v", qid, err)
+			return "", fmt.Errorf("explain failed for queryid %s: %w", qid, err)
+		}
+		return result, nil
 	}
-	// Sidecar-only: no explain cache available
 	return `{"note":"explain cache requires the pg_sage extension","plan":null}`, nil
 }
 
@@ -234,22 +240,27 @@ func readExplain(ctx context.Context, queryid string) (string, error) {
 // ---------------------------------------------------------------------------
 
 // queryJSON executes a single query and returns the JSON text result.
-func queryJSON(ctx context.Context, q string) (string, error) {
+func queryJSON(ctx context.Context, q string, args ...any) (string, error) {
 	var result string
-	err := pool.QueryRow(ctx, q).Scan(&result)
+	err := pool.QueryRow(ctx, q, args...).Scan(&result)
 	return result, err
 }
 
-// queryJSONFallback tries the primary query; on failure tries the fallback.
-func queryJSONFallback(ctx context.Context, primary, fallback string) (string, error) {
+// queryJSONFallback tries primary; on failure tries fallback. Logs with component context.
+func queryJSONFallback(ctx context.Context, component, primary string, primaryArgs []any, fallback string, fallbackArgs []any) (string, error) {
 	var result string
-	err := pool.QueryRow(ctx, primary).Scan(&result)
+	err := pool.QueryRow(ctx, primary, primaryArgs...).Scan(&result)
 	if err == nil {
 		return result, nil
 	}
-	err2 := pool.QueryRow(ctx, fallback).Scan(&result)
+	logWarn(component, "primary query failed: %v, trying fallback", err)
+	if fallbackArgs == nil {
+		fallbackArgs = []any{}
+	}
+	err2 := pool.QueryRow(ctx, fallback, fallbackArgs...).Scan(&result)
 	if err2 != nil {
-		return "", fmt.Errorf("primary: %v; fallback: %v", err, err2)
+		logError(component, "fallback also failed: %v", err2)
+		return "", fmt.Errorf("%s: primary: %v; fallback: %v", component, err, err2)
 	}
 	return result, nil
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -23,8 +24,8 @@ import (
 func requirePG(t *testing.T) {
 	t.Helper()
 	cfg := loadConfig()
-	if cfg.DatabaseURL == "" {
-		t.Skip("SAGE_DATABASE_URL not set, skipping integration test")
+	if os.Getenv("SAGE_DATABASE_URL") == "" {
+		t.Skip("SAGE_DATABASE_URL not set")
 	}
 	if pool != nil {
 		return
@@ -33,7 +34,7 @@ func requirePG(t *testing.T) {
 	if err != nil {
 		t.Skipf("invalid SAGE_DATABASE_URL: %v", err)
 	}
-	poolCfg.MaxConns = 3
+	poolCfg.MaxConns = 5
 
 	p, err := pgxpool.NewWithConfig(context.Background(), poolCfg)
 	if err != nil {

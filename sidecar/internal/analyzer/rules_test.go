@@ -1,0 +1,169 @@
+package analyzer
+
+import (
+	"testing"
+
+	"github.com/pg-sage/sidecar/internal/collector"
+	"github.com/pg-sage/sidecar/internal/config"
+)
+
+func testConfig() *config.Config {
+	return &config.Config{
+		Analyzer: config.AnalyzerConfig{
+			SlowQueryThresholdMs:   1000,
+			TableBloatDeadTuplePct: 20,
+			TableBloatMinRows:     1000,
+			RegressionThresholdPct: 50,
+		},
+	}
+}
+
+func TestRuleTableBloat_MinRows(t *testing.T) {
+	cfg := testConfig()
+	snap := &collector.Snapshot{
+		Tables: []collector.TableStats{
+			{
+				SchemaName: "public", RelName: "tiny",
+				NLiveTup: 50, NDeadTup: 40, // 44% dead but <1000 rows
+			},
+			{
+				SchemaName: "public", RelName: "large",
+				NLiveTup: 5000, NDeadTup: 4000, // 44% dead and >1000 rows
+			},
+		},
+	}
+
+	findings := ruleTableBloat(snap, nil, cfg, nil)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(findings))
+	}
+	if findings[0].ObjectIdentifier != "public.large" {
+		t.Errorf("expected finding for public.large, got %s",
+			findings[0].ObjectIdentifier)
+	}
+}
+
+func TestRuleHighPlanTime(t *testing.T) {
+	cfg := testConfig()
+	snap := &collector.Snapshot{
+		Queries: []collector.QueryStats{
+			{
+				QueryID: 1, Query: "SELECT 1",
+				Calls: 200, MeanExecTime: 1.0, MeanPlanTime: 5.0,
+			},
+			{
+				QueryID: 2, Query: "SELECT 2",
+				Calls: 200, MeanExecTime: 10.0, MeanPlanTime: 1.0,
+			},
+			{
+				QueryID: 3, Query: "SELECT 3",
+				Calls: 50, MeanExecTime: 1.0, MeanPlanTime: 10.0,
+				// Below min calls threshold
+			},
+		},
+	}
+
+	findings := ruleHighPlanTime(snap, nil, cfg, nil)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(findings))
+	}
+	if findings[0].ObjectIdentifier != "queryid:1" {
+		t.Errorf("expected queryid:1, got %s",
+			findings[0].ObjectIdentifier)
+	}
+}
+
+func TestRuleQueryRegression_ResetDetection(t *testing.T) {
+	cfg := testConfig()
+	current := &collector.Snapshot{
+		Queries: []collector.QueryStats{
+			{
+				QueryID: 1, Query: "SELECT reset",
+				Calls: 5, MeanExecTime: 100.0, // calls dropped from 1000
+			},
+		},
+	}
+	previous := &collector.Snapshot{
+		Queries: []collector.QueryStats{
+			{
+				QueryID: 1, Query: "SELECT reset",
+				Calls: 1000, MeanExecTime: 2.0,
+			},
+		},
+	}
+
+	historicalAvg := map[int64]float64{1: 2.0}
+
+	findings := ruleQueryRegression(current, previous, historicalAvg, cfg)
+	if len(findings) != 0 {
+		t.Errorf("expected 0 findings (reset detected), got %d", len(findings))
+	}
+}
+
+func TestRuleQueryRegression_RealRegression(t *testing.T) {
+	cfg := testConfig()
+	current := &collector.Snapshot{
+		Queries: []collector.QueryStats{
+			{
+				QueryID: 1, Query: "SELECT slow",
+				Calls: 1100, MeanExecTime: 100.0,
+			},
+		},
+	}
+	previous := &collector.Snapshot{
+		Queries: []collector.QueryStats{
+			{
+				QueryID: 1, Query: "SELECT slow",
+				Calls: 1000, MeanExecTime: 10.0,
+			},
+		},
+	}
+
+	historicalAvg := map[int64]float64{1: 10.0}
+
+	findings := ruleQueryRegression(current, previous, historicalAvg, cfg)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 regression finding, got %d", len(findings))
+	}
+	if findings[0].Category != "query_regression" {
+		t.Errorf("expected category query_regression, got %s",
+			findings[0].Category)
+	}
+}
+
+func TestRuleSlowQueries(t *testing.T) {
+	cfg := testConfig()
+	snap := &collector.Snapshot{
+		Queries: []collector.QueryStats{
+			{
+				QueryID: 1, Query: "SELECT fast",
+				MeanExecTime: 100.0,
+			},
+			{
+				QueryID: 2, Query: "SELECT slow",
+				MeanExecTime: 5000.0,
+			},
+			{
+				QueryID: 3, Query: "SELECT very slow",
+				MeanExecTime: 15000.0, // 15x threshold
+			},
+		},
+	}
+
+	findings := ruleSlowQueries(snap, nil, cfg, nil)
+	if len(findings) != 2 {
+		t.Fatalf("expected 2 findings, got %d", len(findings))
+	}
+
+	// Check severity: 5x should be warning, 15x should be critical.
+	sevMap := make(map[string]string)
+	for _, f := range findings {
+		sevMap[f.ObjectIdentifier] = f.Severity
+	}
+	if sevMap["queryid:2"] != "warning" {
+		t.Errorf("queryid:2 severity = %s, want warning", sevMap["queryid:2"])
+	}
+	if sevMap["queryid:3"] != "critical" {
+		t.Errorf("queryid:3 severity = %s, want critical", sevMap["queryid:3"])
+	}
+}

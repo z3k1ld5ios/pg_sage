@@ -47,6 +47,7 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 		writeSidecarInfo(&b, ctx)
 		writeSidecarConnectionMetrics(&b, ctx)
 		writeSidecarDatabaseMetrics(&b, ctx)
+		writeOptimizerMetrics(&b, ctx)
 	}
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
@@ -276,6 +277,53 @@ func writeSidecarDatabaseMetrics(b *strings.Builder, ctx context.Context) {
 		fmt.Fprintf(b, "pg_sage_uptime_seconds %d\n", uptimeSeconds)
 		b.WriteString("\n")
 	}
+}
+
+func writeOptimizerMetrics(b *strings.Builder, ctx context.Context) {
+	// 1. pg_sage_optimizer_recommendations_total by action_level
+	b.WriteString("# HELP pg_sage_optimizer_recommendations_total ")
+	b.WriteString("Optimizer recommendations by action level\n")
+	b.WriteString("# TYPE pg_sage_optimizer_recommendations_total gauge\n")
+
+	rows, err := pool.Query(ctx,
+		`SELECT coalesce(detail->>'action_level', 'unknown'), count(*)
+		 FROM sage.findings
+		 WHERE category IN (
+		    'missing_index', 'covering_index', 'partial_index',
+		    'composite_index', 'index_optimization'
+		 )
+		 AND status = 'open'
+		 GROUP BY detail->>'action_level'`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var level string
+			var cnt int64
+			if rows.Scan(&level, &cnt) == nil {
+				fmt.Fprintf(b,
+					"pg_sage_optimizer_recommendations_total"+
+						"{action_level=%q} %d\n", level, cnt)
+			}
+		}
+	}
+	b.WriteString("\n")
+
+	// 2. pg_sage_optimizer_hypopg_validated — count of validated findings
+	b.WriteString("# HELP pg_sage_optimizer_hypopg_validated ")
+	b.WriteString("Findings validated by HypoPG\n")
+	b.WriteString("# TYPE pg_sage_optimizer_hypopg_validated gauge\n")
+	var validatedCount int64
+	err = pool.QueryRow(ctx,
+		`SELECT count(*) FROM sage.findings
+		 WHERE status = 'open'
+		 AND detail->>'hypopg_validated' = 'true'`).Scan(&validatedCount)
+	if err == nil {
+		fmt.Fprintf(b, "pg_sage_optimizer_hypopg_validated %d\n", validatedCount)
+	} else {
+		b.WriteString("pg_sage_optimizer_hypopg_validated 0\n")
+	}
+	b.WriteString("\n")
+
 }
 
 func queryStatus(ctx context.Context) (string, error) {
