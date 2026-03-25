@@ -8,6 +8,31 @@
 
 #include "pg_sage.h"
 #include <limits.h>
+#include "storage/fd.h"
+
+/* ----------------------------------------------------------------
+ * GUC check hooks
+ * ---------------------------------------------------------------- */
+
+static bool
+check_trust_level(char **newval, void **extra, GucSource source)
+{
+    if (*newval == NULL || (*newval)[0] == '\0')
+    {
+        GUC_check_errdetail(
+            "sage.trust_level must be \"observation\", \"advisory\", or \"autonomous\".");
+        return false;
+    }
+
+    if (pg_strcasecmp(*newval, "observation") == 0 ||
+        pg_strcasecmp(*newval, "advisory") == 0 ||
+        pg_strcasecmp(*newval, "autonomous") == 0)
+        return true;
+
+    GUC_check_errdetail(
+        "sage.trust_level must be \"observation\", \"advisory\", or \"autonomous\".");
+    return false;
+}
 
 /* ----------------------------------------------------------------
  * GUC variable definitions
@@ -52,6 +77,7 @@ char       *sage_email_smtp_url           = NULL;
 bool        sage_llm_enabled              = false;
 char       *sage_llm_endpoint             = NULL;
 char       *sage_llm_api_key              = NULL;
+char       *sage_llm_api_key_file         = NULL;
 char       *sage_llm_model                = NULL;
 int         sage_llm_timeout              = 30;
 int         sage_llm_token_budget         = 50000;
@@ -84,6 +110,120 @@ bool        sage_autoexplain_enabled       = false;
 int         sage_autoexplain_min_duration_ms = 1000;
 double      sage_autoexplain_sample_rate   = 0.1;
 int         sage_autoexplain_capture_window = 300;
+
+/* Trust ramp testing override */
+int         sage_trust_ramp_override_days  = 0;
+
+/* Noise reduction thresholds */
+int         sage_toast_bloat_min_rows      = 1000;
+int         sage_schema_design_min_rows    = 100;
+int         sage_schema_design_min_columns = 2;
+
+/*
+ * File-loaded API key — separate from the GUC-managed sage_llm_api_key
+ * so we never pfree GUC memory.  llm.c checks this as a fallback when
+ * sage_llm_api_key is empty.
+ */
+char       *sage_llm_api_key_from_file    = NULL;
+
+/* ----------------------------------------------------------------
+ * sage_load_api_key_from_file — read LLM API key from a file
+ *
+ * Called at startup and on SIGHUP.  Reads the file pointed to by
+ * sage.llm_api_key_file and stores the contents in the separate
+ * sage_llm_api_key_from_file variable.  The LLM code checks both:
+ *   1. sage_llm_api_key      (session-level SET, takes precedence)
+ *   2. sage_llm_api_key_from_file  (file-based fallback)
+ * ---------------------------------------------------------------- */
+#define SAGE_API_KEY_FILE_MAX 4096
+
+void
+sage_load_api_key_from_file(void)
+{
+    FILE   *fp;
+    char    buf[SAGE_API_KEY_FILE_MAX];
+    size_t  len;
+    char   *end;
+    char   *newkey;
+
+    /* Nothing to do if no file configured */
+    if (sage_llm_api_key_file == NULL ||
+        sage_llm_api_key_file[0] == '\0')
+        return;
+
+    fp = AllocateFile(sage_llm_api_key_file, "r");
+    if (fp == NULL)
+    {
+        ereport(WARNING,
+                (errcode_for_file_access(),
+                 errmsg("pg_sage: could not open API key file "
+                        "\"%s\": %m",
+                        sage_llm_api_key_file)));
+        return;
+    }
+
+    len = fread(buf, 1, sizeof(buf) - 1, fp);
+    FreeFile(fp);
+
+    if (len == 0)
+    {
+        ereport(WARNING,
+                (errmsg("pg_sage: API key file \"%s\" is empty",
+                        sage_llm_api_key_file)));
+        return;
+    }
+
+    buf[len] = '\0';
+
+    /* Strip trailing whitespace and newlines */
+    end = buf + len - 1;
+    while (end >= buf &&
+           (*end == '\n' || *end == '\r' ||
+            *end == ' '  || *end == '\t'))
+        *end-- = '\0';
+
+    if (buf[0] == '\0')
+    {
+        ereport(WARNING,
+                (errmsg("pg_sage: API key file \"%s\" contains "
+                        "only whitespace",
+                        sage_llm_api_key_file)));
+        return;
+    }
+
+    /* Store in TopMemoryContext so it survives transactions */
+    newkey = MemoryContextStrdup(TopMemoryContext, buf);
+
+    if (sage_llm_api_key_from_file != NULL)
+        pfree(sage_llm_api_key_from_file);
+
+    sage_llm_api_key_from_file = newkey;
+
+    elog(LOG,
+         "pg_sage: loaded LLM API key from file \"%s\" "
+         "(%zu bytes)",
+         sage_llm_api_key_file,
+         strlen(newkey));
+}
+
+/* ----------------------------------------------------------------
+ * sage_get_llm_api_key — return effective API key
+ *
+ * Prefers the GUC (session-level SET) over the file-loaded key.
+ * Returns NULL if neither source provides a key.
+ * ---------------------------------------------------------------- */
+const char *
+sage_get_llm_api_key(void)
+{
+    if (sage_llm_api_key != NULL && sage_llm_api_key[0] != '\0')
+        return sage_llm_api_key;
+
+    if (sage_llm_api_key_from_file != NULL &&
+        sage_llm_api_key_from_file[0] != '\0')
+        return sage_llm_api_key_from_file;
+
+    return NULL;
+}
 
 /* ----------------------------------------------------------------
  * sage_guc_init — register all sage.* GUC variables
@@ -250,7 +390,7 @@ sage_guc_init(void)
         "observation",
         PGC_SIGHUP,
         0,
-        NULL, NULL, NULL);
+        check_trust_level, NULL, NULL);
 
     /* --- sage.maintenance_window --- */
     DefineCustomStringVariable(
@@ -374,6 +514,19 @@ sage_guc_init(void)
         "API key for LLM service.",
         NULL,
         &sage_llm_api_key,
+        "",
+        PGC_SUSET,
+        GUC_SUPERUSER_ONLY | GUC_NO_SHOW_ALL,
+        NULL, NULL, NULL);
+
+    /* --- sage.llm_api_key_file --- */
+    DefineCustomStringVariable(
+        "sage.llm_api_key_file",
+        "Path to file containing the LLM API key.",
+        "On SIGHUP, the file is re-read, enabling key rotation "
+        "without restart. The file-based key is a fallback: if "
+        "sage.llm_api_key is already set, the file is not read.",
+        &sage_llm_api_key_file,
         "",
         PGC_SIGHUP,
         GUC_SUPERUSER_ONLY,
@@ -625,5 +778,57 @@ sage_guc_init(void)
         1800,
         PGC_SIGHUP,
         GUC_UNIT_S,
+        NULL, NULL, NULL);
+
+    /* --- sage.trust_ramp_override_days --- */
+    DefineCustomIntVariable(
+        "sage.trust_ramp_override_days",
+        "Override trust ramp day for testing (0 = disabled).",
+        NULL,
+        &sage_trust_ramp_override_days,
+        0,
+        0,
+        3650,
+        PGC_SUSET,
+        0,
+        NULL, NULL, NULL);
+
+    /* --- sage.toast_bloat_min_rows --- */
+    DefineCustomIntVariable(
+        "sage.toast_bloat_min_rows",
+        "Minimum table rows before TOAST bloat analysis fires.",
+        NULL,
+        &sage_toast_bloat_min_rows,
+        1000,
+        0,
+        INT_MAX,
+        PGC_SIGHUP,
+        0,
+        NULL, NULL, NULL);
+
+    /* --- sage.schema_design_min_rows --- */
+    DefineCustomIntVariable(
+        "sage.schema_design_min_rows",
+        "Minimum table rows before schema design analysis fires.",
+        NULL,
+        &sage_schema_design_min_rows,
+        100,
+        0,
+        INT_MAX,
+        PGC_SIGHUP,
+        0,
+        NULL, NULL, NULL);
+
+    /* --- sage.schema_design_min_columns --- */
+    DefineCustomIntVariable(
+        "sage.schema_design_min_columns",
+        "Minimum column count before schema design analysis fires.",
+        NULL,
+        &sage_schema_design_min_columns,
+        2,
+        1,
+        1000,
+        PGC_SIGHUP,
+        0,
         NULL, NULL, NULL);
 }

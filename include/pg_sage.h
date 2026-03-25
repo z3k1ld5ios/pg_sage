@@ -153,6 +153,8 @@ extern char       *sage_email_smtp_url;
 extern bool        sage_llm_enabled;
 extern char       *sage_llm_endpoint;
 extern char       *sage_llm_api_key;
+extern char       *sage_llm_api_key_file;
+extern char       *sage_llm_api_key_from_file;
 extern char       *sage_llm_model;
 extern int         sage_llm_timeout;
 extern int         sage_llm_token_budget;
@@ -173,6 +175,10 @@ extern bool        sage_autoexplain_enabled;
 extern int         sage_autoexplain_min_duration_ms;
 extern double      sage_autoexplain_sample_rate;
 extern int         sage_autoexplain_capture_window;
+extern int         sage_trust_ramp_override_days;
+extern int         sage_toast_bloat_min_rows;
+extern int         sage_schema_design_min_rows;
+extern int         sage_schema_design_min_columns;
 
 /* ----------------------------------------------------------------
  * Shared memory access
@@ -187,6 +193,8 @@ extern void sage_shmem_startup(void);
  * Module init functions
  * ---------------------------------------------------------------- */
 extern void sage_guc_init(void);
+extern void sage_load_api_key_from_file(void);
+extern const char *sage_get_llm_api_key(void);
 
 /* ----------------------------------------------------------------
  * Background worker entry points
@@ -194,6 +202,7 @@ extern void sage_guc_init(void);
 extern PGDLLEXPORT void sage_collector_main(Datum main_arg);
 extern PGDLLEXPORT void sage_analyzer_main(Datum main_arg);
 extern PGDLLEXPORT void sage_briefing_main(Datum main_arg);
+extern PGDLLEXPORT void sage_ddl_worker_main(Datum main_arg);
 
 /* ----------------------------------------------------------------
  * Circuit breaker

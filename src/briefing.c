@@ -24,7 +24,6 @@
 static void briefing_sigterm(SIGNAL_ARGS);
 static void briefing_sighup(SIGNAL_ARGS);
 static bool is_briefing_due(void);
-static char *spi_getval_alloc(int row, int col);
 static char *spi_query_simple(const char *sql);
 static size_t slack_write_callback(void *contents, size_t size, size_t nmemb,
                                    void *userp);
@@ -103,21 +102,6 @@ spi_query_simple(const char *sql)
     }
 
     return result.data;
-}
-
-/* ----------------------------------------------------------------
- * SPI helper: get a palloc'd copy of a single value
- * ---------------------------------------------------------------- */
-static char *
-spi_getval_alloc(int row, int col)
-{
-    char *val;
-
-    if (SPI_tuptable == NULL || row >= (int) SPI_processed)
-        return pstrdup("");
-
-    val = SPI_getvalue(SPI_tuptable->vals[row], SPI_tuptable->tupdesc, col);
-    return val ? pstrdup(val) : pstrdup("NULL");
 }
 
 /* ----------------------------------------------------------------
@@ -257,6 +241,7 @@ sage_briefing_main(Datum main_arg)
         {
             got_sighup = false;
             ProcessConfigFile(PGC_SIGHUP);
+            sage_load_api_key_from_file();
         }
 
         /* Check if extension is enabled and not emergency-stopped */
@@ -338,7 +323,6 @@ sage_generate_briefing(bool use_llm)
 {
     StringInfoData  briefing;
     StringInfoData  data_buf;
-    char           *section;
     char           *content = NULL;
     int             connected;
     int             critical_count = 0;
@@ -471,7 +455,7 @@ sage_generate_briefing(bool use_llm)
         if (sage_health && sage_health[0] != '\0')
             appendStringInfo(&usr_prompt, "## Sage Health\n%s\n", sage_health);
 
-        content = sage_llm_call(sys_prompt.data, usr_prompt.data, 1024, &tokens_used);
+        content = sage_llm_call(sys_prompt.data, usr_prompt.data, 4096, &tokens_used);
 
         pfree(sys_prompt.data);
         pfree(usr_prompt.data);
@@ -1035,6 +1019,59 @@ sage_diagnose(PG_FUNCTION_ARGS)
                         pfree(llm_response);
                         continue;
                     }
+
+                    /* Blocklist of mutating functions callable via SELECT */
+                    {
+                        static const char *blocked_functions[] = {
+                            "pg_stat_statements_reset",
+                            "pg_stat_reset",
+                            "pg_stat_reset_single_table_counters",
+                            "pg_stat_reset_single_function_counters",
+                            "pg_stat_reset_shared",
+                            "pg_stat_reset_slru",
+                            "pg_stat_reset_replication_slot",
+                            "pg_terminate_backend",
+                            "pg_cancel_backend",
+                            "pg_reload_conf",
+                            "pg_rotate_logfile",
+                            "set_config",
+                            "lo_unlink",
+                            "lo_create",
+                            "lo_import",
+                            "lo_export",
+                            "pg_advisory_lock",
+                            "pg_advisory_unlock",
+                            "pg_advisory_unlock_all",
+                            "pg_sleep",
+                            "pg_notify",
+                            "txid_current",
+                            NULL
+                        };
+                        const char **fn;
+                        bool blocked = false;
+
+                        for (fn = blocked_functions; *fn != NULL; fn++)
+                        {
+                            if (strstr(lower_sql, *fn) != NULL)
+                            {
+                                appendStringInfo(&conversation,
+                                    "\n\n## Step %d Result\n"
+                                    "Error: Function %s is not allowed"
+                                    " in diagnostic queries.\n",
+                                    step + 1, *fn);
+                                blocked = true;
+                                break;
+                            }
+                        }
+                        if (blocked)
+                        {
+                            pfree(lower_sql);
+                            pfree(diag_sql);
+                            pfree(llm_response);
+                            continue;
+                        }
+                    }
+
                     pfree(lower_sql);
                 }
 
@@ -1156,7 +1193,6 @@ sage_diagnose(PG_FUNCTION_ARGS)
             if (spi_conn == SPI_OK_CONNECT)
             {
                 StringInfoData  fq;
-                char           *findings_text;
                 Oid             argtypes[1] = { TEXTOID };
                 Datum           values[1];
                 char            nulls[1] = { ' ' };

@@ -37,6 +37,7 @@ sage_analyze_vacuum_bloat(void)
 		"       last_autovacuum, last_vacuum "
 		"FROM pg_stat_user_tables "
 		"WHERE n_live_tup > 0 "
+		"AND schemaname != 'sage' "
 		"ORDER BY n_dead_tup DESC "
 		"LIMIT 200",
 		0);
@@ -131,12 +132,12 @@ sage_analyze_vacuum_bloat(void)
 			appendStringInfo(&rec_sql,
 				"ALTER TABLE %s.%s SET (autovacuum_vacuum_scale_factor = 0.05, "
 				"autovacuum_vacuum_threshold = 50);",
-				tables[i].schemaname, tables[i].relname);
+				quote_identifier(tables[i].schemaname), quote_identifier(tables[i].relname));
 
 			appendStringInfo(&rollback_sql,
 				"ALTER TABLE %s.%s RESET (autovacuum_vacuum_scale_factor, "
 				"autovacuum_vacuum_threshold);",
-				tables[i].schemaname, tables[i].relname);
+				quote_identifier(tables[i].schemaname), quote_identifier(tables[i].relname));
 
 			sage_upsert_finding(
 				"vacuum_bloat_dead_tuples", severity,
@@ -552,24 +553,24 @@ sage_analyze_security(void)
 			{
 				appendStringInfo(&rec_sql,
 					"ALTER ROLE %s NOCREATEDB NOCREATEROLE;",
-					roles[i].rolname);
+					quote_identifier(roles[i].rolname));
 				appendStringInfo(&rollback_sql,
 					"ALTER ROLE %s CREATEDB CREATEROLE;",
-					roles[i].rolname);
+					quote_identifier(roles[i].rolname));
 			}
 			else if (roles[i].createdb)
 			{
 				appendStringInfo(&rec_sql,
-					"ALTER ROLE %s NOCREATEDB;", roles[i].rolname);
+					"ALTER ROLE %s NOCREATEDB;", quote_identifier(roles[i].rolname));
 				appendStringInfo(&rollback_sql,
-					"ALTER ROLE %s CREATEDB;", roles[i].rolname);
+					"ALTER ROLE %s CREATEDB;", quote_identifier(roles[i].rolname));
 			}
 			else
 			{
 				appendStringInfo(&rec_sql,
-					"ALTER ROLE %s NOCREATEROLE;", roles[i].rolname);
+					"ALTER ROLE %s NOCREATEROLE;", quote_identifier(roles[i].rolname));
 				appendStringInfo(&rollback_sql,
-					"ALTER ROLE %s CREATEROLE;", roles[i].rolname);
+					"ALTER ROLE %s CREATEROLE;", quote_identifier(roles[i].rolname));
 			}
 
 			sage_upsert_finding(

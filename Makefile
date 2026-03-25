@@ -20,10 +20,11 @@ OBJS = src/pg_sage.o \
        src/action_executor.o \
        src/tier2_extra.o \
        src/mcp_helpers.o \
-       src/autoexplain_hook.o
+       src/autoexplain_hook.o \
+       src/ddl_worker.o
 
-PG_CPPFLAGS = -I$(srcdir)/include
-SHLIB_LINK = -lcurl
+PG_CPPFLAGS = -I$(srcdir)/include -I$(shell $(PG_CONFIG) --includedir)
+SHLIB_LINK = -lcurl -lpq
 
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)

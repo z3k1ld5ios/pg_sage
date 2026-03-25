@@ -62,6 +62,14 @@ sage_upsert_finding(const char *category, const char *severity,
     int         ret;
     int         i;
 
+    /*
+     * Save caller's SPI result set.  SPI_execute_with_args overwrites
+     * the global SPI_tuptable / SPI_processed, which would corrupt any
+     * outer loop that is iterating over a previous query's results.
+     */
+    SPITupleTable  *saved_tuptable  = SPI_tuptable;
+    uint64          saved_processed = SPI_processed;
+
     /* All parameters are text */
     for (i = 0; i < 9; i++)
         argtypes[i] = TEXTOID;
@@ -113,6 +121,10 @@ sage_upsert_finding(const char *category, const char *severity,
              object_id ? object_id : "(null)",
              ret);
     }
+
+    /* Restore caller's SPI result set */
+    SPI_tuptable = saved_tuptable;
+    SPI_processed = saved_processed;
 }
 
 /* ----------------------------------------------------------------
@@ -133,6 +145,10 @@ sage_resolve_finding(const char *category, const char *object_id)
     char    nulls[2] = {' ', ' '};
     int     ret;
 
+    /* Save caller's SPI result set (same rationale as upsert) */
+    SPITupleTable  *saved_tuptable  = SPI_tuptable;
+    uint64          saved_processed = SPI_processed;
+
     values[0] = CStringGetTextDatum(category ? category : "");
     values[1] = CStringGetTextDatum(object_id ? object_id : "");
 
@@ -147,6 +163,10 @@ sage_resolve_finding(const char *category, const char *object_id)
              object_id ? object_id : "(null)",
              ret);
     }
+
+    /* Restore caller's SPI result set */
+    SPI_tuptable = saved_tuptable;
+    SPI_processed = saved_processed;
 }
 
 /* ----------------------------------------------------------------

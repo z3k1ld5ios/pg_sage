@@ -147,6 +147,14 @@ CREATE FUNCTION sage.resume()
 
 COMMENT ON FUNCTION sage.resume() IS 'Resumes autonomous operations after an emergency stop.';
 
+CREATE FUNCTION sage.set_trust_ramp_start(ts timestamptz)
+    RETURNS boolean
+    AS 'pg_sage', 'sage_set_trust_ramp_start'
+    LANGUAGE C STRICT VOLATILE;
+
+COMMENT ON FUNCTION sage.set_trust_ramp_start(timestamptz) IS
+    'Override the trust ramp start timestamp in shared memory (for testing).';
+
 CREATE FUNCTION sage.explain(queryid BIGINT)
     RETURNS TEXT
     AS 'pg_sage', 'sage_explain'

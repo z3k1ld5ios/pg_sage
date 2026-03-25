@@ -109,12 +109,11 @@ spi_query_text_param(const char *sql, const char *param)
         for (j = 0; j < SPI_tuptable->tupdesc->natts; j++)
         {
             bool    isnull;
-            Datum   val;
             char   *str;
 
-            val = SPI_getbinval(SPI_tuptable->vals[i],
-                                SPI_tuptable->tupdesc,
-                                j + 1, &isnull);
+            (void) SPI_getbinval(SPI_tuptable->vals[i],
+                                 SPI_tuptable->tupdesc,
+                                 j + 1, &isnull);
             if (isnull)
             {
                 appendStringInfoString(&result, "NULL");

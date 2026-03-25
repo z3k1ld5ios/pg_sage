@@ -156,7 +156,7 @@ sage_disk_pressure_exceeded(void)
 
         if (ret == SPI_OK_SELECT && SPI_processed > 0 && !sage_spi_isnull(0, 0))
         {
-            int64   ts_size = sage_spi_getval_int64(0, 0);
+            (void) sage_spi_getval_int64(0, 0);
 
 #ifdef __linux__
             {
@@ -176,8 +176,6 @@ sage_disk_pressure_exceeded(void)
                         exceeded = true;
                 }
             }
-#else
-            (void) ts_size;
 #endif
         }
     }

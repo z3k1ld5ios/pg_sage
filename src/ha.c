@@ -105,7 +105,6 @@ sage_check_recovery_mode(void)
 bool
 sage_is_safe_for_writes(void)
 {
-    bool    safe;
     bool    in_recovery;
     bool    stopped;
     int     flips;
@@ -195,6 +194,10 @@ sage_get_trust_day(void)
     TimestampTz     ramp_start;
     TimestampTz     now;
     long            diff_secs;
+
+    /* Allow test override via sage.trust_ramp_override_days */
+    if (sage_trust_ramp_override_days > 0)
+        return sage_trust_ramp_override_days;
 
     if (!sage_state)
         return 0;

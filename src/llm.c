@@ -118,14 +118,15 @@ json_extract_string(const char *json, const char *key)
 
     if (*pos == '"')
     {
+        StringInfoData valbuf;
+
         /* String value — find matching close quote, handling escapes */
         pos++;
         start = pos;
 
-        StringInfoData valbuf;
         initStringInfo(&valbuf);
 
-        while (*pos && !(*pos == '"' && *(pos - 1) != '\\'))
+        while (*pos && *pos != '"')
         {
             if (*pos == '\\' && *(pos + 1))
             {
@@ -208,7 +209,7 @@ sage_llm_available(void)
         return false;
 
     /* API key must be set unless endpoint is localhost (Ollama) */
-    if (sage_llm_api_key == NULL || sage_llm_api_key[0] == '\0')
+    if (sage_get_llm_api_key() == NULL)
     {
         if (strstr(sage_llm_endpoint, "localhost") == NULL &&
             strstr(sage_llm_endpoint, "127.0.0.1") == NULL)
@@ -222,10 +223,7 @@ sage_llm_available(void)
     /* Check daily token budget */
     if (sage_state != NULL)
     {
-        int today;
-
         LWLockAcquire(sage_state->lock, LW_SHARED);
-        today = sage_state->llm_day_of_year;
 
         if (sage_state->llm_tokens_used_today >= sage_llm_token_budget)
         {
@@ -333,11 +331,15 @@ sage_llm_call(const char *system_prompt, const char *user_prompt,
         headers = NULL;
         headers = curl_slist_append(headers, "Content-Type: application/json");
 
-        if (sage_llm_api_key != NULL && sage_llm_api_key[0] != '\0')
         {
-            snprintf(auth_header, sizeof(auth_header),
-                     "Authorization: Bearer %s", sage_llm_api_key);
-            headers = curl_slist_append(headers, auth_header);
+            const char *api_key = sage_get_llm_api_key();
+
+            if (api_key != NULL)
+            {
+                snprintf(auth_header, sizeof(auth_header),
+                         "Authorization: Bearer %s", api_key);
+                headers = curl_slist_append(headers, auth_header);
+            }
         }
 
         /* Prepare response buffer */

@@ -169,6 +169,9 @@ _PG_init(void)
     /* 1. Register all GUCs */
     sage_guc_init();
 
+    /* 1b. Load API key from file if configured */
+    sage_load_api_key_from_file();
+
     /* 2. Request shared memory */
 #if PG_VERSION_NUM >= 150000
     prev_shmem_request_hook = shmem_request_hook;
@@ -195,9 +198,10 @@ _PG_init(void)
                     "also in shared_preload_libraries", PG_SAGE_VERSION)));
 
     /* 7. Register background workers */
-    register_sage_bgworker("pg_sage collector", "sage_collector_main");
-    register_sage_bgworker("pg_sage analyzer",  "sage_analyzer_main");
-    register_sage_bgworker("pg_sage briefing",  "sage_briefing_main");
+    register_sage_bgworker("pg_sage collector",   "sage_collector_main");
+    register_sage_bgworker("pg_sage analyzer",   "sage_analyzer_main");
+    register_sage_bgworker("pg_sage briefing",   "sage_briefing_main");
+    register_sage_bgworker("pg_sage ddl_worker", "sage_ddl_worker_main");
 }
 
 /* ================================================================
@@ -207,6 +211,7 @@ _PG_init(void)
 PG_FUNCTION_INFO_V1(sage_status);
 PG_FUNCTION_INFO_V1(sage_emergency_stop);
 PG_FUNCTION_INFO_V1(sage_resume);
+PG_FUNCTION_INFO_V1(sage_set_trust_ramp_start);
 
 /* ----------------------------------------------------------------
  * sage_status — return JSONB with current extension state
@@ -385,8 +390,8 @@ sage_status(PG_FUNCTION_ARGS)
 
         if (local_last_collect_time != 0)
         {
-            char *ts = timestamptz_to_str(local_last_collect_time);
-            v.type = jbvString; v.val.string.val = ts;
+            const char *ts = timestamptz_to_str(local_last_collect_time);
+            v.type = jbvString; v.val.string.val = (char *) ts;
             v.val.string.len = strlen(ts);
         }
         else
@@ -405,8 +410,8 @@ sage_status(PG_FUNCTION_ARGS)
 
         if (local_last_analyze_time != 0)
         {
-            char *ts = timestamptz_to_str(local_last_analyze_time);
-            v.type = jbvString; v.val.string.val = ts;
+            const char *ts = timestamptz_to_str(local_last_analyze_time);
+            v.type = jbvString; v.val.string.val = (char *) ts;
             v.val.string.len = strlen(ts);
         }
         else
@@ -425,8 +430,8 @@ sage_status(PG_FUNCTION_ARGS)
 
         if (local_last_briefing_time != 0)
         {
-            char *ts = timestamptz_to_str(local_last_briefing_time);
-            v.type = jbvString; v.val.string.val = ts;
+            const char *ts = timestamptz_to_str(local_last_briefing_time);
+            v.type = jbvString; v.val.string.val = (char *) ts;
             v.val.string.len = strlen(ts);
         }
         else
@@ -480,6 +485,31 @@ sage_resume(PG_FUNCTION_ARGS)
 
     ereport(LOG,
             (errmsg("pg_sage: resumed from emergency stop")));
+
+    PG_RETURN_BOOL(true);
+}
+
+/* ----------------------------------------------------------------
+ * sage_set_trust_ramp_start — override trust ramp start in shmem
+ * ---------------------------------------------------------------- */
+Datum
+sage_set_trust_ramp_start(PG_FUNCTION_ARGS)
+{
+    TimestampTz     new_start;
+
+    if (!sage_state)
+        ereport(ERROR,
+                (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+                 errmsg("pg_sage shared memory not initialised")));
+
+    new_start = PG_GETARG_TIMESTAMPTZ(0);
+
+    LWLockAcquire(sage_state->lock, LW_EXCLUSIVE);
+    sage_state->trust_ramp_start = new_start;
+    LWLockRelease(sage_state->lock);
+
+    ereport(LOG,
+            (errmsg("pg_sage: trust_ramp_start overridden")));
 
     PG_RETURN_BOOL(true);
 }

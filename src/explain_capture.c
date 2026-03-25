@@ -317,9 +317,17 @@ sage_explain_capture_with_source(int64 queryid, const char *source)
 
 	/* -------- Step 2: Run EXPLAIN on the query -------- */
 	resetStringInfo(&sql);
+#if PG_VERSION_NUM >= 160000
+	elog(LOG, "pg_sage: using GENERIC_PLAN for queryid " INT64_FORMAT, queryid);
+	appendStringInfo(&sql,
+		"EXPLAIN (FORMAT JSON, COSTS, VERBOSE, GENERIC_PLAN) %s",
+		query_text);
+#else
+	elog(LOG, "pg_sage: GENERIC_PLAN not available (PG_VERSION_NUM=%d)", PG_VERSION_NUM);
 	appendStringInfo(&sql,
 		"EXPLAIN (FORMAT JSON, COSTS, VERBOSE) %s",
 		query_text);
+#endif
 
 	PG_TRY();
 	{
@@ -327,7 +335,7 @@ sage_explain_capture_with_source(int64 queryid, const char *source)
 		 * EXPLAIN returns SPI_OK_SELECT (not SPI_OK_UTILITY) because
 		 * it produces a result set.
 		 */
-		ret = SPI_execute(sql.data, true, 0);
+		ret = SPI_execute(sql.data, false, 0);
 		if ((ret == SPI_OK_SELECT || ret == SPI_OK_UTILITY) && SPI_processed > 0)
 		{
 			char *tmp = sage_spi_getval_str(0, 0);
@@ -348,11 +356,18 @@ sage_explain_capture_with_source(int64 queryid, const char *source)
 	}
 	PG_CATCH();
 	{
+		ErrorData *edata;
+		MemoryContext ecxt = MemoryContextSwitchTo(TopMemoryContext);
+		edata = CopyErrorData();
+		MemoryContextSwitchTo(ecxt);
 		FlushErrorState();
 		elog(LOG,
 			 "pg_sage: explain_capture — EXPLAIN could not plan queryid " INT64_FORMAT " "
-			 "(may require parameter values)",
-			 queryid);
+			 "error=[%s] sql=[%.200s]",
+			 queryid,
+			 edata->message ? edata->message : "(null)",
+			 sql.data);
+		FreeErrorData(edata);
 	}
 	PG_END_TRY();
 

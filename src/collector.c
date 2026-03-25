@@ -188,13 +188,25 @@ sage_collect_stat_statements(void)
         ret = sage_spi_exec(
             "SELECT queryid, query, calls, total_exec_time, mean_exec_time, "
             "       rows, shared_blks_hit, shared_blks_read, temp_blks_written, "
+#if PG_VERSION_NUM >= 170000
+            "       shared_blk_read_time, shared_blk_write_time "
+#else
             "       blk_read_time, blk_write_time "
+#endif
             "FROM pg_stat_statements s "
             "JOIN pg_database d ON d.oid = s.dbid "
             "WHERE d.datname = current_database() "
+            "  AND s.queryid IS NOT NULL "
             "ORDER BY total_exec_time DESC "
             "LIMIT 500",
             0);
+
+        if (ret < 0)
+        {
+            elog(WARNING,
+                 "pg_sage: SPI query for pg_stat_statements failed "
+                 "(ret=%d) - is pg_stat_statements loaded?", ret);
+        }
 
         if (ret >= 0 && SPI_processed > 0)
         {
@@ -999,7 +1011,7 @@ sage_collector_main(Datum main_arg)
     PushActiveSnapshot(GetTransactionSnapshot());
     SPI_connect();
     advisory_ret = sage_spi_exec(
-        "SELECT pg_try_advisory_lock(483722657)", 0);
+        "SELECT pg_try_advisory_lock(710190109)", 0);
 
     if (advisory_ret < 0 || SPI_processed == 0)
     {
@@ -1049,6 +1061,7 @@ sage_collector_main(Datum main_arg)
         {
             got_sighup = false;
             ProcessConfigFile(PGC_SIGHUP);
+            sage_load_api_key_from_file();
             elog(LOG, "pg_sage: collector reloaded configuration");
         }
 
@@ -1154,7 +1167,7 @@ sage_collector_main(Datum main_arg)
     StartTransactionCommand();
     PushActiveSnapshot(GetTransactionSnapshot());
     SPI_connect();
-    sage_spi_exec("SELECT pg_advisory_unlock(483722657)", 0);
+    sage_spi_exec("SELECT pg_advisory_unlock(710190109)", 0);
     SPI_finish();
     PopActiveSnapshot();
     CommitTransactionCommand();

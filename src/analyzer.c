@@ -273,10 +273,17 @@ sage_analyze_unused_indexes(void)
         "    FROM current_snap "
         "    GROUP BY indexrelname, schemaname, relname "
         ") "
-        "SELECT indexrelname, schemaname, relname, "
-        "       total_scans, size_bytes "
-        "FROM agg WHERE total_scans = 0 "
-        "ORDER BY size_bytes DESC "
+        "SELECT a.indexrelname, a.schemaname, a.relname, "
+        "       a.total_scans, a.size_bytes "
+        "FROM agg a "
+        "JOIN pg_index i ON i.indexrelid = ( "
+        "    quote_ident(a.schemaname) || '.' || quote_ident(a.indexrelname) "
+        ")::regclass "
+        "WHERE a.total_scans = 0 "
+        "  AND a.schemaname != 'sage' "
+        "  AND NOT i.indisprimary "
+        "  AND NOT i.indisunique "
+        "ORDER BY a.size_bytes DESC "
         "LIMIT 50",
         days);
 
@@ -339,7 +346,7 @@ sage_analyze_unused_indexes(void)
 
             appendStringInfo(&drop_sql,
                 "DROP INDEX CONCURRENTLY %s.%s;",
-                schemaname, indexrelname);
+                quote_identifier(schemaname), quote_identifier(indexrelname));
 
             /* We cannot reconstruct CREATE INDEX here exactly, but
              * we can look up the definition from pg_indexes. For now,
@@ -348,8 +355,8 @@ sage_analyze_unused_indexes(void)
             appendStringInfo(&rollback_sql_buf,
                 "-- Retrieve original DDL: "
                 "SELECT indexdef FROM pg_indexes "
-                "WHERE schemaname = '%s' AND indexname = '%s';",
-                schemaname, indexrelname);
+                "WHERE schemaname = %s AND indexname = %s;",
+                quote_literal_cstr(schemaname), quote_literal_cstr(indexrelname));
 
             sage_upsert_finding(
                 "unused_index",
@@ -825,7 +832,7 @@ sage_analyze_missing_indexes(void)
     appendStringInfo(&sql,
         "SELECT schemaname, relname, seq_scan, seq_tup_read, n_live_tup "
         "FROM pg_stat_user_tables "
-        "WHERE seq_scan > 0 AND n_live_tup > %d "
+        "WHERE schemaname != 'sage' AND seq_scan > 0 AND n_live_tup > %d "
         "ORDER BY seq_tup_read DESC "
         "LIMIT 20",
         sage_seq_scan_min_rows);
@@ -1246,7 +1253,7 @@ sage_analyze_seq_scans(void)
         "SELECT schemaname, relname, seq_scan, idx_scan, n_live_tup, "
         "       pg_size_pretty(pg_total_relation_size(relid)) as size "
         "FROM pg_stat_user_tables "
-        "WHERE n_live_tup > %d AND seq_scan > idx_scan AND seq_scan > 100 "
+        "WHERE schemaname != 'sage' AND n_live_tup > %d AND seq_scan > idx_scan AND seq_scan > 100 "
         "ORDER BY seq_tup_read DESC "
         "LIMIT 20",
         sage_seq_scan_min_rows);
@@ -1934,7 +1941,7 @@ sage_analyze_index_bloat(void)
         "              / pg_relation_size(i.indexrelid) "
         "         ELSE 0 END as estimated_bloat_pct "
         "FROM pg_stat_user_indexes i "
-        "WHERE pg_relation_size(i.indexrelid) > 1048576 "
+        "WHERE i.schemaname != 'sage' AND pg_relation_size(i.indexrelid) > 1048576 "
         "ORDER BY pg_relation_size(i.indexrelid) DESC "
         "LIMIT 50",
         true, 0);
@@ -2045,7 +2052,7 @@ sage_analyze_index_write_penalty(void)
         "            ELSE -1 END as write_read_ratio "
         "FROM pg_stat_user_indexes i "
         "JOIN pg_stat_user_tables t ON t.relid = i.relid "
-        "WHERE t.n_tup_ins + t.n_tup_upd + t.n_tup_del > 1000 "
+        "WHERE i.schemaname != 'sage' AND t.n_tup_ins + t.n_tup_upd + t.n_tup_del > 1000 "
         "ORDER BY write_read_ratio DESC "
         "LIMIT 20",
         true, 0);
@@ -2404,6 +2411,7 @@ sage_analyzer_main(Datum main_arg)
         {
             got_sighup = false;
             ProcessConfigFile(PGC_SIGHUP);
+            sage_load_api_key_from_file();
         }
 
         /* Check termination */
@@ -2435,8 +2443,29 @@ sage_analyzer_main(Datum main_arg)
         SPI_connect();
         PushActiveSnapshot(GetTransactionSnapshot());
 
-        /* Auto-unsuppress expired findings at the start of each cycle */
-        sage_check_suppressions();
+        /* Auto-unsuppress expired findings at the start of each cycle.
+         * On first boot the sage schema may not exist yet (extension SQL
+         * not loaded), so wrap in PG_TRY to avoid killing the worker. */
+        PG_TRY();
+        {
+            sage_check_suppressions();
+        }
+        PG_CATCH();
+        {
+            FlushErrorState();
+
+            ereport(DEBUG1,
+                    (errmsg("pg_sage analyzer: sage_check_suppressions skipped "
+                            "(schema not ready yet)")));
+
+            /* Transaction is aborted; roll back and start fresh so the
+             * SPI_finish / PopActiveSnapshot / Commit below succeed. */
+            AbortCurrentTransaction();
+            StartTransactionCommand();
+            SPI_connect();
+            PushActiveSnapshot(GetTransactionSnapshot());
+        }
+        PG_END_TRY();
 
         SPI_finish();
         PopActiveSnapshot();

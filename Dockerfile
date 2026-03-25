@@ -5,6 +5,7 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     postgresql-server-dev-17 \
     libcurl4-openssl-dev \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy extension source

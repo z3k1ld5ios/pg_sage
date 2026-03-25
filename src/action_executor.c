@@ -14,6 +14,7 @@
 #include <string.h>
 #include <ctype.h>
 
+#include "access/xact.h"
 #include "executor/spi.h"
 #include "utils/timestamp.h"
 #include "lib/stringinfo.h"
@@ -406,6 +407,64 @@ sage_action_executor_run(void)
             continue;
         }
 
+        /*
+         * BUG-8 Part B: Check cooldown — skip if this finding had a
+         * failure logged within the last 24 hours.
+         */
+        {
+            static const char *cooldown_sql =
+                "SELECT 1 FROM sage.action_log "
+                "WHERE finding_id = $1 AND outcome = 'failure' "
+                "AND executed_at > now() - interval '24 hours' "
+                "LIMIT 1";
+
+            Oid     cd_argtypes[1] = {INT8OID};
+            Datum   cd_values[1];
+            char    cd_nulls[1] = {' '};
+            int     cd_ret;
+
+            cd_values[0] = Int64GetDatum(finding_id);
+            cd_ret = SPI_execute_with_args(cooldown_sql, 1, cd_argtypes,
+                                           cd_values, cd_nulls, true, 1);
+
+            if (cd_ret == SPI_OK_SELECT && SPI_processed > 0)
+            {
+                ereport(LOG,
+                        (errmsg("pg_sage action_executor: skipping "
+                                "finding " INT64_FORMAT " — failed within "
+                                "last 24 hours (cooldown)",
+                                finding_id)));
+
+                pfree(category);
+                pfree(severity);
+                pfree(object_id);
+                pfree(title);
+                if (sql)
+                    pfree(sql);
+                if (rollback_sql)
+                    pfree(rollback_sql);
+                continue;
+            }
+        }
+
+        /*
+         * BUG-8 Part A: Mark acted_on_at BEFORE execution so that
+         * failed actions are not retried every cycle.
+         */
+        {
+            static const char *mark_sql =
+                "UPDATE sage.findings SET acted_on_at = now() "
+                "WHERE id = $1";
+
+            Oid     m_argtypes[1] = {INT8OID};
+            Datum   m_values[1];
+            char    m_nulls[1] = {' '};
+
+            m_values[0] = Int64GetDatum(finding_id);
+            SPI_execute_with_args(mark_sql, 1, m_argtypes,
+                                  m_values, m_nulls, false, 0);
+        }
+
         PG_TRY();
         {
             sage_execute_action(finding_id, category, severity,
@@ -414,14 +473,65 @@ sage_action_executor_run(void)
         PG_CATCH();
         {
             ErrorData *edata = CopyErrorData();
+            char      *errmsg_copy;
 
             FlushErrorState();
+
+            /* Save the error message before any transaction work */
+            errmsg_copy = edata->message ? pstrdup(edata->message)
+                                         : pstrdup("(no message)");
+
             ereport(WARNING,
                     (errmsg("pg_sage action_executor: failed executing action "
                             "for finding " INT64_FORMAT ": %s",
-                            finding_id,
-                            edata->message ? edata->message : "(no message)")));
+                            finding_id, errmsg_copy)));
+
+            /*
+             * BUG-6: The transaction is aborted after a DDL failure.
+             * We must recover the transaction state before we can log
+             * the failure to sage.action_log.
+             */
+            AbortCurrentTransaction();
+            StartTransactionCommand();
+            SPI_connect();
+
+            /* Log the failure with the captured error message */
+            {
+                static const char *fail_catch_sql =
+                    "INSERT INTO sage.action_log "
+                    "(action_type, finding_id, sql_executed, outcome, "
+                    " before_state) "
+                    "VALUES ($1, $2, $3, 'failure', "
+                    " jsonb_build_object('error', $4))";
+
+                Oid     fc_argtypes[4] = {TEXTOID, INT8OID, TEXTOID,
+                                          TEXTOID};
+                Datum   fc_values[4];
+                char    fc_nulls[4] = {' ', ' ', ' ', ' '};
+
+                fc_values[0] = CStringGetTextDatum(
+                                   category ? category : "unknown");
+                fc_values[1] = Int64GetDatum(finding_id);
+                fc_values[2] = CStringGetTextDatum(sql ? sql : "");
+                fc_values[3] = CStringGetTextDatum(errmsg_copy);
+
+                SPI_execute_with_args(fail_catch_sql, 4, fc_argtypes,
+                                      fc_values, fc_nulls, false, 0);
+            }
+
+            SPI_finish();
+            CommitTransactionCommand();
+
+            pfree(errmsg_copy);
             FreeErrorData(edata);
+
+            /*
+             * Re-establish SPI for the remaining loop iterations.
+             * We need a fresh transaction + SPI context.
+             */
+            StartTransactionCommand();
+            SPI_connect();
+            sage_spi_exec("SET LOCAL statement_timeout = '5000ms'", 0);
         }
         PG_END_TRY();
 
@@ -662,6 +772,27 @@ sage_execute_action(int64 finding_id,
                     "finding " INT64_FORMAT " (%s): %.200s",
                     risk_label, finding_id, category, sql)));
 
+    /*
+     * SPI runs inside a transaction, so DROP/CREATE INDEX CONCURRENTLY
+     * is not supported.  Strip the CONCURRENTLY keyword when present.
+     */
+    {
+        const char *conc = strstr(sql, " CONCURRENTLY");
+        if (conc != NULL)
+        {
+            StringInfoData rewritten;
+            initStringInfo(&rewritten);
+            appendBinaryStringInfo(&rewritten, sql,
+                                   (int)(conc - sql));
+            appendStringInfoString(&rewritten, conc + strlen(" CONCURRENTLY"));
+            sql = rewritten.data;
+
+            ereport(LOG,
+                    (errmsg("pg_sage action_executor: rewrote SQL "
+                            "(stripped CONCURRENTLY): %.200s", sql)));
+        }
+    }
+
     /* 3. Capture before_state */
     before_state = capture_before_state(category, object_id);
 
@@ -860,9 +991,10 @@ sage_rollback_check(void)
     SPI_connect();
     sage_spi_exec("SET LOCAL statement_timeout = '5000ms'", 0);
 
-    /* First, get current mean query latency */
+    /* First, get current mean query latency.
+     * Cast to float8 so sage_spi_getval_float (DatumGetFloat8) works. */
     ret = sage_spi_exec(
-        "SELECT round(avg(mean_exec_time)::numeric, 4) "
+        "SELECT avg(mean_exec_time)::float8 "
         "FROM pg_stat_statements "
         "WHERE calls > 0",
         0);
@@ -878,7 +1010,10 @@ sage_rollback_check(void)
     current_latency = sage_spi_getval_float(0, 0);
 
     if (current_latency <= 0.0)
+    {
+        SPI_finish();
         return;
+    }
 
     /* Query recent actions that need regression checking */
     initStringInfo(&query);

@@ -72,7 +72,6 @@ get_config_double(const char *key, double default_val)
 void
 sage_analyze_cost_attribution(void)
 {
-    double  cost_per_cpu_hour;
     double  cost_per_iops;
     double  total_waste_usd = 0.0;
     int     ret;
@@ -87,7 +86,6 @@ sage_analyze_cost_attribution(void)
     sage_spi_exec("SET LOCAL statement_timeout = '500ms'", 0);
 
     /* Fetch config values */
-    cost_per_cpu_hour = get_config_double("cost_per_cpu_hour_usd", 0.0);
     cost_per_iops     = get_config_double("cost_per_iops", 0.0);
 
     /* ----------------------------------------------------------------
