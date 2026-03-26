@@ -89,4 +89,6 @@ const (
 	DefaultPrometheusListenAddr = "0.0.0.0:9187"
 
 	DefaultRateLimit = 60
+
+	DefaultAPIListenAddr = "0.0.0.0:8080"
 )
