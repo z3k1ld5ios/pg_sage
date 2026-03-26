@@ -12,7 +12,6 @@
 /tmp_check/
 sidecar/sage-sidecar
 sidecar/sage-sidecar-standalone.exe
-sidecar/go.sum
 sidecar/coverage.out
 sidecar/pg_sage_sidecar_linux
 

@@ -32,7 +32,12 @@ import (
 	"github.com/pg-sage/sidecar/internal/startup"
 )
 
-const version = "0.7.0-rc1"
+// Set by goreleaser ldflags at build time.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
 
 // Global state.
 var (
@@ -65,6 +70,11 @@ var validTableName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-z
 var validInteger = regexp.MustCompile(`^-?[0-9]+$`)
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		fmt.Printf("pg_sage %s (commit: %s, built: %s)\n", version, commit, date)
+		os.Exit(0)
+	}
+
 	var err error
 	cfg, err = config.Load(os.Args[1:])
 	if err != nil {
