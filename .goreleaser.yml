@@ -2,10 +2,6 @@ version: 2
 
 project_name: pg_sage
 
-before:
-  hooks:
-    - cd sidecar && go mod tidy
-
 builds:
   - id: pg_sage_sidecar
     main: ./cmd/pg_sage_sidecar/
@@ -27,11 +23,8 @@ builds:
 
 archives:
   - id: default
-    format: tar.gz
+    formats: [tar.gz]
     name_template: "pg_sage_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format_overrides:
-      - goos: windows
-        format: zip
     files:
       - README.md
       - LICENSE

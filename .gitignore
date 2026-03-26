@@ -25,3 +25,8 @@ cloudsqltests/*.log
 # Task artifacts
 tasks/
 sidecar/tasks/
+
+# Spec/planning documents (not part of release)
+pg_sage_*_CLAUDE.md
+pg_sage_*_spec*.md
+pg_sage_*_test_plan*.md
