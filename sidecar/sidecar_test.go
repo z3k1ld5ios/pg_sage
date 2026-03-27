@@ -324,8 +324,8 @@ func TestToolsList(t *testing.T) {
 	var result ToolsListResult
 	readJSONRPCResult(t, readEvent, &result)
 
-	if len(result.Tools) != 4 {
-		t.Fatalf("expected 4 tools, got %d", len(result.Tools))
+	if len(result.Tools) != 6 {
+		t.Fatalf("expected 6 tools, got %d", len(result.Tools))
 	}
 
 	expectedNames := map[string]bool{
@@ -333,6 +333,8 @@ func TestToolsList(t *testing.T) {
 		"briefing":         false,
 		"suggest_index":    false,
 		"review_migration": false,
+		"forecast":         false,
+		"query_hints":      false,
 	}
 	for _, tool := range result.Tools {
 		if _, ok := expectedNames[tool.Name]; ok {

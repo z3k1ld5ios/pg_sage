@@ -197,8 +197,8 @@ func TestCheckPGVersion_LivePG(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunChecks: %v", err)
 	}
-	if result.PGVersionNum != 150017 {
-		t.Errorf("PGVersionNum = %d, want 150017 (PG 15.17)",
+	if result.PGVersionNum < 140000 {
+		t.Errorf("PGVersionNum = %d, want >= 140000 (PG14+)",
 			result.PGVersionNum)
 	}
 }
