@@ -252,8 +252,8 @@ func TestAPI_Actions_List(t *testing.T) {
 		t.Fatalf("status: %d", w.Code)
 	}
 	m := decodeJSON(t, w)
-	if m["database"] != "all" {
-		t.Errorf("database: %v", m["database"])
+	if m["database"] != "db1" {
+		t.Errorf("database: got %v, want db1", m["database"])
 	}
 }
 

@@ -201,3 +201,21 @@ func (m *DatabaseManager) InstanceCount() int {
 	defer m.mu.RUnlock()
 	return len(m.instances)
 }
+
+// ResolveDatabaseName returns the actual database name for a filter
+// value. If name is "all" or empty, it returns the name of the first
+// registered instance (useful in standalone mode with a single DB).
+// Returns the original name if no instances are registered.
+func (m *DatabaseManager) ResolveDatabaseName(
+	name string,
+) string {
+	if name != "" && name != "all" {
+		return name
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for n := range m.instances {
+		return n
+	}
+	return name
+}

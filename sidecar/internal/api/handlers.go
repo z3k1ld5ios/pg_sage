@@ -32,21 +32,22 @@ func findingsListHandler(
 		}
 		filters := parseFindingFilters(q)
 		pool := mgr.PoolForDatabase(database)
+		displayName := mgr.ResolveDatabaseName(database)
 		if pool == nil {
 			jsonResponse(w, findingsEmptyResponse(
-				database, filters,
+				displayName, filters,
 			))
 			return
 		}
 		findings, total, err := queryFindings(
-			r.Context(), pool, filters, database,
+			r.Context(), pool, filters, displayName,
 		)
 		if err != nil {
 			jsonError(w, err.Error(), 500)
 			return
 		}
 		jsonResponse(w, map[string]any{
-			"database": database,
+			"database": displayName,
 			"filters":  filters,
 			"total":    total,
 			"offset":   filters.Offset,
@@ -151,10 +152,11 @@ func actionsListHandler(
 		if limit > 200 {
 			limit = 200
 		}
+		displayName := mgr.ResolveDatabaseName(database)
 		pool := mgr.PoolForDatabase(database)
 		if pool == nil {
 			jsonResponse(w, map[string]any{
-				"database": database, "total": 0,
+				"database": displayName, "total": 0,
 				"offset": offset, "limit": limit,
 				"actions": []any{},
 			})
@@ -168,7 +170,7 @@ func actionsListHandler(
 			return
 		}
 		jsonResponse(w, map[string]any{
-			"database": database, "total": total,
+			"database": displayName, "total": total,
 			"offset": offset, "limit": limit,
 			"actions": actions,
 		})
@@ -210,10 +212,11 @@ func snapshotLatestHandler(
 		if metric == "" {
 			metric = "cache_hit_ratio"
 		}
+		displayName := mgr.ResolveDatabaseName(database)
 		pool := mgr.PoolForDatabase(database)
 		if pool == nil {
 			jsonResponse(w, map[string]any{
-				"database": database, "snapshot": nil,
+				"database": displayName, "snapshot": nil,
 			})
 			return
 		}
@@ -222,12 +225,12 @@ func snapshotLatestHandler(
 		)
 		if err != nil {
 			jsonResponse(w, map[string]any{
-				"database": database, "snapshot": nil,
+				"database": displayName, "snapshot": nil,
 			})
 			return
 		}
 		jsonResponse(w, map[string]any{
-			"database": database, "snapshot": data,
+			"database": displayName, "snapshot": data,
 		})
 	}
 }
@@ -246,10 +249,11 @@ func snapshotHistoryHandler(
 			jsonError(w, "invalid metric", http.StatusBadRequest)
 			return
 		}
+		displayName := mgr.ResolveDatabaseName(database)
 		pool := mgr.PoolForDatabase(database)
 		if pool == nil {
 			jsonResponse(w, map[string]any{
-				"database": database, "metric": metric,
+				"database": displayName, "metric": metric,
 				"points": []any{},
 			})
 			return
@@ -260,13 +264,13 @@ func snapshotHistoryHandler(
 		)
 		if err != nil {
 			jsonResponse(w, map[string]any{
-				"database": database, "metric": metric,
+				"database": displayName, "metric": metric,
 				"points": []any{},
 			})
 			return
 		}
 		jsonResponse(w, map[string]any{
-			"database": database, "metric": metric,
+			"database": displayName, "metric": metric,
 			"points": points,
 		})
 	}
