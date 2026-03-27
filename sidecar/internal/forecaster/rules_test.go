@@ -1,0 +1,324 @@
+package forecaster
+
+import (
+	"testing"
+	"time"
+)
+
+// --- disk growth ---
+
+func TestForecastDiskGrowth_Growing(t *testing.T) {
+	aggs := makeSysAggs(14, func(i int) DaySystemAgg {
+		return DaySystemAgg{
+			MaxDBSizeBytes: float64(100e9) + float64(i)*10e9,
+		}
+	})
+	cfg := ForecasterConfig{DiskWarnGrowthGBDay: 5}
+	findings := forecastDiskGrowth(aggs, cfg)
+	if len(findings) == 0 {
+		t.Fatal("expected disk growth finding")
+	}
+	if findings[0].Category != "forecast_disk_growth" {
+		t.Errorf("category = %q", findings[0].Category)
+	}
+}
+
+func TestForecastDiskGrowth_Flat(t *testing.T) {
+	aggs := makeSysAggs(14, func(_ int) DaySystemAgg {
+		return DaySystemAgg{MaxDBSizeBytes: 100e9}
+	})
+	cfg := ForecasterConfig{DiskWarnGrowthGBDay: 5}
+	findings := forecastDiskGrowth(aggs, cfg)
+	if len(findings) != 0 {
+		t.Error("expected no findings for flat data")
+	}
+}
+
+func TestForecastDiskGrowth_InsufficientData(t *testing.T) {
+	aggs := makeSysAggs(3, func(_ int) DaySystemAgg {
+		return DaySystemAgg{MaxDBSizeBytes: 100e9}
+	})
+	cfg := ForecasterConfig{DiskWarnGrowthGBDay: 5}
+	findings := forecastDiskGrowth(aggs, cfg)
+	if len(findings) != 0 {
+		t.Error("expected no findings for insufficient data")
+	}
+}
+
+// --- connection saturation ---
+
+func TestForecastConnectionSaturation_Growing(t *testing.T) {
+	aggs := makeSysAggs(30, func(i int) DaySystemAgg {
+		return DaySystemAgg{
+			MaxActiveBackends: float64(50 + i*3),
+			MaxConnections:    200,
+		}
+	})
+	cfg := ForecasterConfig{ConnectionWarnPct: 80}
+	findings := forecastConnectionSaturation(aggs, cfg)
+	if len(findings) == 0 {
+		t.Fatal("expected connection saturation finding")
+	}
+	cat := findings[0].Category
+	if cat != "forecast_connection_saturation" {
+		t.Errorf("category = %q", cat)
+	}
+}
+
+func TestForecastConnectionSaturation_Flat(t *testing.T) {
+	aggs := makeSysAggs(30, func(_ int) DaySystemAgg {
+		return DaySystemAgg{
+			MaxActiveBackends: 20,
+			MaxConnections:    200,
+		}
+	})
+	cfg := ForecasterConfig{ConnectionWarnPct: 80}
+	findings := forecastConnectionSaturation(aggs, cfg)
+	if len(findings) != 0 {
+		t.Error("expected no findings for flat connections")
+	}
+}
+
+func TestForecastConnectionSaturation_Insufficient(t *testing.T) {
+	aggs := makeSysAggs(3, func(_ int) DaySystemAgg {
+		return DaySystemAgg{
+			MaxActiveBackends: 50,
+			MaxConnections:    200,
+		}
+	})
+	cfg := ForecasterConfig{ConnectionWarnPct: 80}
+	findings := forecastConnectionSaturation(aggs, cfg)
+	if len(findings) != 0 {
+		t.Error("expected no findings for insufficient data")
+	}
+}
+
+// --- cache pressure ---
+
+func TestForecastCachePressure_Declining(t *testing.T) {
+	aggs := makeSysAggs(14, func(i int) DaySystemAgg {
+		return DaySystemAgg{
+			AvgCacheHitRatio: 99.0 - float64(i)*1.5,
+		}
+	})
+	cfg := ForecasterConfig{CacheWarnThreshold: 0.90}
+	findings := forecastCachePressure(aggs, cfg)
+	if len(findings) == 0 {
+		t.Fatal("expected cache pressure finding")
+	}
+}
+
+func TestForecastCachePressure_Stable(t *testing.T) {
+	aggs := makeSysAggs(14, func(_ int) DaySystemAgg {
+		return DaySystemAgg{AvgCacheHitRatio: 99.5}
+	})
+	cfg := ForecasterConfig{CacheWarnThreshold: 0.90}
+	findings := forecastCachePressure(aggs, cfg)
+	if len(findings) != 0 {
+		t.Error("expected no findings for stable cache")
+	}
+}
+
+func TestForecastCachePressure_Insufficient(t *testing.T) {
+	aggs := makeSysAggs(3, func(_ int) DaySystemAgg {
+		return DaySystemAgg{AvgCacheHitRatio: 80}
+	})
+	cfg := ForecasterConfig{CacheWarnThreshold: 0.90}
+	findings := forecastCachePressure(aggs, cfg)
+	if len(findings) != 0 {
+		t.Error("expected no findings for insufficient data")
+	}
+}
+
+// --- sequence exhaustion ---
+
+func TestForecastSequenceExhaustion_Growing(t *testing.T) {
+	seqAggs := makeSeqAggs("public.orders_id_seq", 14,
+		func(i int) float64 { return 80 + float64(i)*0.5 },
+	)
+	cfg := ForecasterConfig{
+		SequenceWarnDays:     90,
+		SequenceCriticalDays: 30,
+	}
+	findings := forecastSequenceExhaustion(seqAggs, cfg)
+	if len(findings) == 0 {
+		t.Fatal("expected sequence exhaustion finding")
+	}
+	if findings[0].ObjectIdentifier != "public.orders_id_seq" {
+		t.Errorf(
+			"identifier = %q",
+			findings[0].ObjectIdentifier,
+		)
+	}
+}
+
+func TestForecastSequenceExhaustion_Flat(t *testing.T) {
+	seqAggs := makeSeqAggs("public.orders_id_seq", 14,
+		func(_ int) float64 { return 10 },
+	)
+	cfg := ForecasterConfig{
+		SequenceWarnDays:     90,
+		SequenceCriticalDays: 30,
+	}
+	findings := forecastSequenceExhaustion(seqAggs, cfg)
+	if len(findings) != 0 {
+		t.Error("expected no findings for flat sequence")
+	}
+}
+
+func TestForecastSequenceExhaustion_Insufficient(t *testing.T) {
+	seqAggs := makeSeqAggs("public.orders_id_seq", 3,
+		func(i int) float64 { return 90 + float64(i)*5 },
+	)
+	cfg := ForecasterConfig{
+		SequenceWarnDays:     90,
+		SequenceCriticalDays: 30,
+	}
+	findings := forecastSequenceExhaustion(seqAggs, cfg)
+	if len(findings) != 0 {
+		t.Error("expected no findings for insufficient data")
+	}
+}
+
+// --- query volume ---
+
+func TestForecastQueryVolume_HighGrowth(t *testing.T) {
+	qAggs := makeQueryAggs(14, func(i int) float64 {
+		if i < 7 {
+			return 1000
+		}
+		return 2500 // 150% growth
+	})
+	cfg := ForecasterConfig{}
+	findings := forecastQueryVolume(qAggs, cfg)
+	if len(findings) == 0 {
+		t.Fatal("expected query volume finding")
+	}
+	if findings[0].Severity != "critical" {
+		t.Errorf("severity = %q, want critical", findings[0].Severity)
+	}
+}
+
+func TestForecastQueryVolume_ModerateGrowth(t *testing.T) {
+	qAggs := makeQueryAggs(14, func(i int) float64 {
+		if i < 7 {
+			return 1000
+		}
+		return 1600 // 60% growth
+	})
+	cfg := ForecasterConfig{}
+	findings := forecastQueryVolume(qAggs, cfg)
+	if len(findings) == 0 {
+		t.Fatal("expected query volume finding")
+	}
+	if findings[0].Severity != "warning" {
+		t.Errorf("severity = %q, want warning", findings[0].Severity)
+	}
+}
+
+func TestForecastQueryVolume_Flat(t *testing.T) {
+	qAggs := makeQueryAggs(14, func(_ int) float64 {
+		return 1000
+	})
+	cfg := ForecasterConfig{}
+	findings := forecastQueryVolume(qAggs, cfg)
+	if len(findings) != 0 {
+		t.Error("expected no findings for flat volume")
+	}
+}
+
+func TestForecastQueryVolume_Insufficient(t *testing.T) {
+	qAggs := makeQueryAggs(7, func(_ int) float64 {
+		return 1000
+	})
+	cfg := ForecasterConfig{}
+	findings := forecastQueryVolume(qAggs, cfg)
+	if len(findings) != 0 {
+		t.Error("expected no findings for insufficient data")
+	}
+}
+
+// --- checkpoint pressure ---
+
+func TestForecastCheckpointPressure_High(t *testing.T) {
+	aggs := makeSysAggs(10, func(i int) DaySystemAgg {
+		return DaySystemAgg{
+			TotalCheckpoints: float64(i) * 400,
+		}
+	})
+	cfg := ForecasterConfig{}
+	findings := forecastCheckpointPressure(aggs, cfg)
+	if len(findings) == 0 {
+		t.Fatal("expected checkpoint pressure finding")
+	}
+	cat := findings[0].Category
+	if cat != "forecast_checkpoint_pressure" {
+		t.Errorf("category = %q", cat)
+	}
+}
+
+func TestForecastCheckpointPressure_Low(t *testing.T) {
+	aggs := makeSysAggs(10, func(i int) DaySystemAgg {
+		return DaySystemAgg{
+			TotalCheckpoints: float64(i) * 10,
+		}
+	})
+	cfg := ForecasterConfig{}
+	findings := forecastCheckpointPressure(aggs, cfg)
+	if len(findings) != 0 {
+		t.Error("expected no findings for low checkpoint rate")
+	}
+}
+
+func TestForecastCheckpointPressure_Insufficient(t *testing.T) {
+	aggs := makeSysAggs(3, func(i int) DaySystemAgg {
+		return DaySystemAgg{
+			TotalCheckpoints: float64(i) * 1000,
+		}
+	})
+	cfg := ForecasterConfig{}
+	findings := forecastCheckpointPressure(aggs, cfg)
+	if len(findings) != 0 {
+		t.Error("expected no findings for insufficient data")
+	}
+}
+
+// --- test helpers ---
+
+func makeSysAggs(
+	n int, fill func(int) DaySystemAgg,
+) []DaySystemAgg {
+	aggs := make([]DaySystemAgg, n)
+	for i := range aggs {
+		aggs[i] = fill(i)
+		aggs[i].Day = time.Now().AddDate(0, 0, -n+i)
+	}
+	return aggs
+}
+
+func makeQueryAggs(
+	n int, fill func(int) float64,
+) []DayQueryAgg {
+	aggs := make([]DayQueryAgg, n)
+	for i := range aggs {
+		aggs[i] = DayQueryAgg{
+			Day:        time.Now().AddDate(0, 0, -n+i),
+			TotalCalls: fill(i),
+		}
+	}
+	return aggs
+}
+
+func makeSeqAggs(
+	name string, n int, pctFn func(int) float64,
+) []DaySeqAgg {
+	aggs := make([]DaySeqAgg, n)
+	for i := range aggs {
+		aggs[i] = DaySeqAgg{
+			Day:     time.Now().AddDate(0, 0, -n+i),
+			SeqName: name,
+			PctUsed: pctFn(i),
+		}
+	}
+	return aggs
+}
