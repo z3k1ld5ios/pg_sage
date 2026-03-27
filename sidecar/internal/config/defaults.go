@@ -18,7 +18,7 @@ const (
 	DefaultAnalyzerInterval              = 600 * time.Second
 	DefaultSlowQueryThresholdMs          = 1000
 	DefaultSeqScanMinRows                = 100000
-	DefaultUnusedIndexWindowDays         = 30
+	DefaultUnusedIndexWindowDays         = 7
 	DefaultIndexBloatThresholdPct        = 30
 	DefaultTableBloatDeadTuplePct        = 20
 	DefaultIdleInTxTimeoutMinutes        = 30
