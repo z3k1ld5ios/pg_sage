@@ -41,3 +41,7 @@ sidecar/web/node_modules/
 
 # Claude Code zip bundles
 pg_sage_claude_code*.zip
+
+# Local test configs
+sidecar/hint_test_config.yaml
+sidecar/test_config.yaml
