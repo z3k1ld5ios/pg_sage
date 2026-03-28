@@ -48,6 +48,10 @@ func ExecConcurrently(
 	timeout time.Duration,
 	opts ...DDLOption,
 ) error {
+	if err := ValidateExecutorSQL(sql); err != nil {
+		return fmt.Errorf("SQL validation: %w", err)
+	}
+
 	o := applyDDLOpts(opts)
 
 	conn, err := pool.Acquire(ctx)
@@ -95,6 +99,10 @@ func ExecInTransaction(
 	timeout time.Duration,
 	opts ...DDLOption,
 ) error {
+	if err := ValidateExecutorSQL(sql); err != nil {
+		return fmt.Errorf("SQL validation: %w", err)
+	}
+
 	o := applyDDLOpts(opts)
 
 	tx, err := pool.Begin(ctx)

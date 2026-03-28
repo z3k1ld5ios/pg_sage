@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/pg-sage/sidecar/internal/llm"
 )
 
 const maxPromptChars = 16384 // ~4096 tokens at 4 chars/token
@@ -111,8 +113,10 @@ func FormatPrompt(tc TableContext) string {
 
 	b.WriteString("\n### Queries\n")
 	for _, q := range tc.Queries {
-		fmt.Fprintf(&b, "- [calls=%d, mean=%.2fms, total=%.2fms] %s\n",
-			q.Calls, q.MeanTimeMs, q.TotalTimeMs, q.Text)
+		sanitized := llm.StripSQLComments(q.Text)
+		fmt.Fprintf(&b,
+			"- [calls=%d, mean=%.2fms, total=%.2fms] %s\n",
+			q.Calls, q.MeanTimeMs, q.TotalTimeMs, sanitized)
 	}
 
 	if len(tc.Plans) > 0 {

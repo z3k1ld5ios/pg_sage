@@ -100,7 +100,7 @@ func analyzeQueryRewrites(
 	var queryLines []string
 	for _, c := range unique {
 		q := c.query
-		truncQuery := q.Query
+		truncQuery := llm.StripSQLComments(q.Query)
 		if len(truncQuery) > 300 {
 			truncQuery = truncQuery[:300] + "..."
 		}

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -23,11 +24,14 @@ import (
 // Global state
 // ---------------------------------------------------------------------------
 
+const maxSSESessions = 100
+
 var (
 	pool               *pgxpool.Pool
 	sessions           sync.Map // sessionID -> *sseSession
-	extensionAvailable bool     // true when sage schema + functions are detected
-	cloudEnvironment   string   // "aurora", "rds", "cloud-sql", "alloydb", "azure", "self-managed"
+	sseSessionCount    int64    // atomic counter
+	extensionAvailable bool
+	cloudEnvironment   string
 )
 
 type sseSession struct {
@@ -411,9 +415,20 @@ func ensureMCPLogTable() {
 func handleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		http.Error(w,
+			"streaming not supported",
+			http.StatusInternalServerError)
 		return
 	}
+
+	// Enforce max SSE session limit to prevent OOM.
+	if atomic.LoadInt64(&sseSessionCount) >= maxSSESessions {
+		http.Error(w,
+			`{"error":"too many SSE sessions"}`,
+			http.StatusServiceUnavailable)
+		return
+	}
+	atomic.AddInt64(&sseSessionCount, 1)
 
 	sessionID := uuid.New().String()
 	sess := &sseSession{
@@ -425,19 +440,26 @@ func handleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	origin := r.Header.Get("Origin")
+	if origin == "http://localhost:8080" ||
+		origin == "http://127.0.0.1:8080" {
+		w.Header().Set(
+			"Access-Control-Allow-Origin", origin,
+		)
+	}
 
 	// Send the endpoint event
 	fmt.Fprintf(w, "event: endpoint\ndata: /messages?sessionId=%s\n\n", sessionID)
 	flusher.Flush()
 
-	// Stream responses until client disconnects
+	// Stream responses until client disconnects.
 	ctx := r.Context()
 	for {
 		select {
 		case <-ctx.Done():
 			close(sess.done)
 			sessions.Delete(sessionID)
+			atomic.AddInt64(&sseSessionCount, -1)
 			return
 		case msg := <-sess.ch:
 			fmt.Fprintf(w, "event: message\ndata: %s\n\n", msg)

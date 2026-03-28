@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strings"
 )
@@ -28,7 +29,10 @@ func authMiddleware(apiKey string, next http.Handler) http.Handler {
 		}
 
 		token := strings.TrimPrefix(header, "Bearer ")
-		if token == header || token != apiKey {
+		if token == header ||
+			subtle.ConstantTimeCompare(
+				[]byte(token), []byte(apiKey),
+			) != 1 {
 			// Either no "Bearer " prefix, or token doesn't match
 			logWarn("auth", "rejected %s %s from %s: invalid API key", r.Method, r.URL.Path, clientIP(r))
 			w.Header().Set("Content-Type", "application/json")
