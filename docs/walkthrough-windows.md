@@ -47,7 +47,7 @@ psql -h localhost -U postgres -c "CREATE USER sage_agent WITH PASSWORD 'sagepw';
 Start pg_sage:
 
 ```cmd
-pg_sage.exe --database-url "postgres://sage_agent:sagepw@localhost:5432/postgres"
+pg_sage.exe --pg-url "postgres://sage_agent:sagepw@localhost:5432/postgres"
 ```
 
 pg_sage connects, bootstraps the `sage` schema, and starts collecting. Leave it
@@ -102,7 +102,7 @@ postgres:
 
 llm:
   enabled: true
-  endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+  endpoint: "https://generativelanguage.googleapis.com/v1beta/openai"
   model: "gemini-2.5-flash"
   api_key: YOUR_API_KEY_HERE
   optimizer:
@@ -161,7 +161,7 @@ pg_sage_connection_up 1
 
 ## 6. MCP Server (For AI Assistants)
 
-pg_sage exposes the Model Context Protocol on port 8080 (configurable). Claude
+pg_sage exposes the Model Context Protocol on port 5433 (configurable). Claude
 Desktop, Cursor, and other MCP-compatible tools can connect.
 
 Configure Claude Desktop (`%APPDATA%\Claude\claude_desktop_config.json`):
@@ -170,7 +170,7 @@ Configure Claude Desktop (`%APPDATA%\Claude\claude_desktop_config.json`):
 {
   "mcpServers": {
     "pg_sage": {
-      "url": "http://localhost:8080/sse"
+      "url": "http://localhost:5433/sse"
     }
   }
 }
@@ -216,7 +216,7 @@ docker rm -f pg-test
 - **curl**: Windows 10+ includes curl. If not found, use PowerShell's
   `Invoke-WebRequest` or install via `winget install curl`.
 - **Firewall**: Windows Firewall may prompt for access when pg_sage starts
-  listening on ports 8080 and 9187.
+  listening on ports 5433, 8080, and 9187.
 
 ---
 
@@ -224,7 +224,7 @@ docker rm -f pg-test
 
 | Feature | Tier | LLM Required? |
 |---------|------|---------------|
-| 18+ deterministic rules (indexes, queries, sequences, bloat, replication) | 1 | No |
+| 25+ deterministic rules (indexes, queries, sequences, bloat, replication) | 1 | No |
 | LLM index optimizer with HypoPG validation | 2 | Yes |
 | Trust-gated action executor with rollback | 3 | No |
 | Prometheus metrics | Core | No |

@@ -40,7 +40,7 @@ psql -h localhost -U postgres -c "
 Start pg_sage:
 
 ```bash
-./pg_sage --database-url "postgres://sage_agent:sagepw@localhost:5432/postgres"
+./pg_sage --pg-url "postgres://sage_agent:sagepw@localhost:5432/postgres"
 ```
 
 pg_sage connects, bootstraps the `sage` schema, and starts collecting. Leave it
@@ -97,7 +97,7 @@ postgres:
 
 llm:
   enabled: true
-  endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+  endpoint: "https://generativelanguage.googleapis.com/v1beta/openai"
   model: "gemini-2.5-flash"
   api_key: YOUR_API_KEY_HERE
   optimizer:
@@ -149,13 +149,13 @@ pg_sage_connection_up 1
 pg_sage_database_size_bytes 2.68435456e+08
 ```
 
-Wire this into Grafana with the included dashboard: `grafana/pg_sage_dashboard.json`.
+Wire this into Grafana or any Prometheus-compatible dashboard for production use.
 
 ---
 
 ## 6. MCP Server (For AI Assistants)
 
-pg_sage exposes the Model Context Protocol on port 8080 (configurable). Claude
+pg_sage exposes the Model Context Protocol on port 5433 (configurable). Claude
 Desktop, Cursor, and other MCP-compatible tools can connect.
 
 Configure Claude Desktop (`~/.config/claude/claude_desktop_config.json`):
@@ -164,7 +164,7 @@ Configure Claude Desktop (`~/.config/claude/claude_desktop_config.json`):
 {
   "mcpServers": {
     "pg_sage": {
-      "url": "http://localhost:8080/sse"
+      "url": "http://localhost:5433/sse"
     }
   }
 }
@@ -181,8 +181,9 @@ Available MCP resources:
 | `sage://stats/{table}` | Table statistics |
 | `sage://explain/{queryid}` | Cached EXPLAIN plan |
 
-Available MCP tools: `diagnose`, `briefing`, `suggest_index`, `review_migration`,
+Available MCP tools: `sage_briefing`, `suggest_index`, `review_migration`,
 `sage_status`, `sage_emergency_stop`, `sage_resume`.
+`diagnose` and `briefing` are also available when the C extension is installed.
 
 Ask questions like:
 - "What are my slowest queries?"
@@ -211,7 +212,7 @@ docker rm -f pg-test
 
 | Feature | Tier | LLM Required? |
 |---------|------|---------------|
-| 18+ deterministic rules (indexes, queries, sequences, bloat, replication) | 1 | No |
+| 25+ deterministic rules (indexes, queries, sequences, bloat, replication) | 1 | No |
 | LLM index optimizer with HypoPG validation | 2 | Yes |
 | Trust-gated action executor with rollback | 3 | No |
 | Prometheus metrics | Core | No |

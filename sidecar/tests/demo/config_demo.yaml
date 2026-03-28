@@ -1,0 +1,98 @@
+# pg_sage Demo Configuration
+# ===========================
+# Pre-tuned for hands-on demos. Thresholds are lowered so findings
+# surface quickly with a small dataset (pgbench scale 10, ~200K rows).
+
+mode: standalone
+
+postgres:
+  host: localhost
+  port: 5432
+  user: sage_agent
+  password: sagepw
+  database: postgres
+  sslmode: disable
+  max_connections: 2
+
+collector:
+  interval_seconds: 15          # Collect every 15s (production: 60s+)
+  batch_size: 1000
+
+analyzer:
+  interval_seconds: 30          # Analyze every 30s (production: 300s+)
+  slow_query_threshold_ms: 500  # Flag queries > 500ms (production: 5000ms)
+  seq_scan_min_rows: 10000      # Flag seq scans on tables > 10K rows
+                                # (production: 100K+). Lower so the demo
+                                # seed data (~60K audit_log rows) triggers it.
+  unused_index_window_days: 1   # Flag indexes unused for 1 day (production: 30+)
+  index_bloat_threshold_pct: 20 # Flag indexes > 20% bloated
+  table_bloat_dead_tuple_pct: 10  # Flag tables with > 10% dead tuples.
+                                  # The demo UPDATE workload creates bloat fast.
+  table_bloat_min_rows: 500     # Check bloat on tables > 500 rows
+                                # (production: 10K+)
+  idle_in_transaction_timeout_minutes: 5
+  cache_hit_ratio_warning: 0.90 # Warn if cache hit ratio < 90%
+                                # (production: 0.99)
+  regression_threshold_pct: 30  # Flag queries that regress > 30%
+  checkpoint_frequency_warning_per_hour: 20
+
+safety:
+  cpu_ceiling_pct: 95
+  query_timeout_ms: 1000
+  ddl_timeout_seconds: 60
+
+trust:
+  level: observation            # Safe default — pg_sage only observes,
+                                # never modifies anything automatically.
+
+# LLM integration (disabled by default for offline demos).
+# To enable, set enabled: true and provide an API key.
+llm:
+  enabled: false
+  # endpoint: "https://generativelanguage.googleapis.com/v1beta/openai"
+  # api_key: ${SAGE_LLM_API_KEY}
+  # model: "gemini-2.5-flash-preview"
+  # timeout_seconds: 30
+  # token_budget_daily: 500000
+  # context_budget_tokens: 4096
+  # index_optimizer:
+  #   enabled: true
+  #   min_query_calls: 10
+
+briefing:
+  schedule: "0 * * * *"        # Hourly briefing
+  channels:
+    - stdout
+
+alerting:
+  enabled: false                # Disable alerting for demo — check findings
+                                # via the dashboard or SQL instead.
+
+auto_explain:
+  enabled: true
+  log_min_duration_ms: 500      # Capture EXPLAIN plans for queries > 500ms
+
+forecaster:
+  enabled: true
+  lookback_days: 7              # Use 7 days of history for forecasting
+
+tuner:
+  enabled: true
+  min_query_calls: 10           # Lower threshold so recommendations appear
+                                # quickly during the demo (production: 100+)
+
+retention:
+  snapshots_days: 7
+  findings_days: 7
+  actions_days: 7
+  explains_days: 7
+
+mcp:
+  enabled: true
+  listen_addr: "0.0.0.0:5433"
+
+prometheus:
+  listen_addr: "0.0.0.0:9187"
+
+api:
+  listen_addr: "0.0.0.0:8080"

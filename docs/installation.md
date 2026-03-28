@@ -32,7 +32,7 @@ Invoke-WebRequest -Uri https://github.com/jasonmassie01/pg_sage/releases/latest/
 
 ```bash
 docker run -e SAGE_DATABASE_URL="postgres://sage_agent:YOUR_PASSWORD@host:5432/db" \
-  -p 8080:8080 -p 9187:9187 \
+  -p 5433:5433 -p 8080:8080 -p 9187:9187 \
   ghcr.io/jasonmassie01/pg_sage:latest
 ```
 
@@ -64,10 +64,10 @@ Ensure `pg_stat_statements` is loaded on your database (`shared_preload_librarie
 The simplest way to start -- observation mode, no LLM:
 
 ```bash
-./pg_sage --database-url "postgres://sage_agent:YOUR_PASSWORD@your-instance:5432/postgres"
+./pg_sage --pg-url "postgres://sage_agent:YOUR_PASSWORD@your-instance:5432/postgres"
 ```
 
-This starts the collector (every 60s), analyzer (every 120s), MCP server on `:8080`, and Prometheus metrics on `:9187`.
+This starts the collector (every 60s), analyzer (every 600s), MCP server on `:5433`, API+dashboard on `:8080`, and Prometheus metrics on `:9187`.
 
 ---
 
@@ -85,28 +85,28 @@ postgres:
   password: YOUR_PASSWORD
   database: postgres
   sslmode: require
-  max_connections: 5
+  max_connections: 2
 
 collector:
   interval_seconds: 60
 
 analyzer:
-  interval_seconds: 120
+  interval_seconds: 600
 
 trust:
   level: observation
 
 llm:
   enabled: true
-  endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+  endpoint: "https://generativelanguage.googleapis.com/v1beta/openai"
   model: "gemini-2.5-flash"
-  api_key: ${SAGE_GEMINI_API_KEY}
+  api_key: ${SAGE_LLM_API_KEY}
   optimizer:
     enabled: true
 
 mcp:
   enabled: true
-  listen_addr: "0.0.0.0:8080"
+  listen_addr: "0.0.0.0:5433"
 
 prometheus:
   listen_addr: "0.0.0.0:9187"
@@ -120,13 +120,14 @@ prometheus:
 
 ## Build from Source
 
-Requires Go 1.23+:
+Requires Go 1.24+:
 
 ```bash
 git clone https://github.com/jasonmassie01/pg_sage.git
 cd pg_sage/sidecar
+cd web && npm ci && npm run build && cd ..
 go build -o pg_sage ./cmd/pg_sage_sidecar
-./pg_sage --database-url "postgres://sage_agent:YOUR_PASSWORD@host:5432/postgres"
+./pg_sage --pg-url "postgres://sage_agent:YOUR_PASSWORD@host:5432/postgres"
 ```
 
 ---
@@ -140,13 +141,13 @@ After starting pg_sage, verify it is running:
 curl -s http://localhost:9187/metrics | head -10
 
 # Check MCP endpoint
-curl -s http://localhost:8080/sse
+curl -s http://localhost:5433/sse
 ```
 
 Connect to your database and check the sage schema:
 
 ```sql
--- Findings appear after the first analyzer cycle (~120 seconds)
+-- Findings appear after the first analyzer cycle (~600 seconds)
 SELECT category, severity, title
 FROM sage.findings
 WHERE status = 'open'

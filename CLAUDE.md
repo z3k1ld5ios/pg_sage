@@ -8,7 +8,7 @@ pg_sage is an autonomous PostgreSQL DBA agent that continuously monitors, analyz
 **Module:** `github.com/pg-sage/sidecar`
 **Go:** 1.24
 **Target:** PostgreSQL 14+
-**Tests:** 584+ (571 unit + 13 integration), 0 failures
+**Tests:** 762+ test functions, 0 failures
 **Modes:** Standalone (single DB) and Fleet (multi-DB from one sidecar)
 
 ## Architecture
@@ -56,7 +56,7 @@ pg_sage/
 │   ├── internal/
 │   │   ├── advisor/                  # LLM config tuning (vacuum, WAL, memory)
 │   │   ├── analyzer/                 # Tier 1 rules engine + findings
-│   │   ├── api/                      # REST API (14 endpoints) + embedded dashboard
+│   │   ├── api/                      # REST API (17 endpoints) + embedded dashboard
 │   │   │   ├── dist/                 # React build output (go:embed)
 │   │   │   └── *.go                  # Router, handlers, middleware, helpers
 │   │   ├── briefing/                 # Tier 2 health briefings
@@ -104,7 +104,7 @@ cd sidecar
 cd web && npm ci && npm run build && cd ..
 go build ./cmd/pg_sage_sidecar/
 
-# Run tests (584+ tests)
+# Run tests (762+ tests)
 go test ./... -count=1 -timeout 300s
 
 # Run with race detector
@@ -129,7 +129,7 @@ cd .. && goreleaser build --snapshot --clean
 | Prometheus | `:9187` | Metrics endpoint (text format) |
 | API + Dashboard | `:8080` | REST API (`/api/v1/*`) + React SPA |
 
-## REST API Endpoints (14)
+## REST API Endpoints (17)
 
 All under `/api/v1/`, all accept `?database=` filter in fleet mode:
 
@@ -149,10 +149,13 @@ All under `/api/v1/`, all accept `?database=` filter in fleet mode:
 | GET | `/metrics` | JSON metrics |
 | POST | `/emergency-stop` | Halt all autonomous actions |
 | POST | `/resume` | Resume after emergency stop |
+| GET | `/forecasts` | Forecaster predictions |
+| GET | `/query-hints` | Active query hints from tuner |
+| GET | `/alert-log` | Alert delivery history |
 
 ## Testing Strategy
 
-584+ tests using stdlib `testing` package. Three levels:
+762+ tests using stdlib `testing` package. Three levels:
 
 1. **Unit tests** (`*_test.go`) — rules, config parsing, fleet manager, API handlers, optimizer, advisor
 2. **Integration tests** (`//go:build integration`) — real HTTP via httptest, fleet scenarios
