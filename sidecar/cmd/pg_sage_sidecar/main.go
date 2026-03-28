@@ -2035,6 +2035,9 @@ func (rl *RateLimiter) cleanup() {
 }
 
 func rateLimitMiddleware(rl *RateLimiter, next http.Handler) http.Handler {
+	if rl == nil {
+		return next
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !rl.Allow(clientIP(r)) {
 			http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
