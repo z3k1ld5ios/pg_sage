@@ -18,12 +18,13 @@ postgres:
 collector:
   interval_seconds: 60     # How often to snapshot catalog views
   batch_size: 1000          # Keyset pagination batch for large table lists
+  max_queries: 500           # Max queries to track from pg_stat_statements
 
 analyzer:
   interval_seconds: 600    # How often to run the rules engine
   slow_query_threshold_ms: 1000
   seq_scan_min_rows: 100000
-  unused_index_window_days: 30
+  unused_index_window_days: 30  # Built-in default is 7; 30 recommended for prod
   index_bloat_threshold_pct: 30
   table_bloat_dead_tuple_pct: 20
   table_bloat_min_rows: 1000         # Skip bloat checks for tiny tables
@@ -38,6 +39,7 @@ analyzer:
 safety:
   cpu_ceiling_pct: 90           # active_backends / max_connections threshold
   query_timeout_ms: 500         # Collector/analyzer query timeout
+  lock_timeout_ms: 30000        # Lock acquisition timeout for DDL
   ddl_timeout_seconds: 300      # Tier 3 DDL timeout (CREATE INDEX, etc.)
   disk_pressure_threshold_pct: 5
   backoff_consecutive_skips: 3  # Skips before entering dormant mode
@@ -53,6 +55,7 @@ trust:
   rollback_threshold_pct: 10    # Regression % that triggers auto-rollback
   rollback_window_minutes: 15   # Time to wait before checking regression
   rollback_cooldown_days: 7     # Days to skip re-executing a rolled-back action
+  cascade_cooldown_cycles: 3   # Cycles to wait before cascading related actions
 
 llm:
   enabled: false
@@ -60,9 +63,15 @@ llm:
   api_key: ${SAGE_LLM_API_KEY}
   model: ""                     # e.g., gpt-4o, gemini-2.5-flash-preview
   timeout_seconds: 30
-  token_budget_daily: 50000
+  token_budget_daily: 500000
   context_budget_tokens: 4096
   cooldown_seconds: 300         # Circuit breaker cooldown after 3 failures
+  # Cost reduction tips:
+  #   - Advisor interval 7200s (2h) instead of 3600s saves ~50% advisor tokens
+  #   - Briefing daily (default) vs hourly saves ~23x briefing tokens
+  #   - Optimizer min_query_calls 100+ avoids analyzing one-off queries
+  #   - Tuner min_query_calls 100+ avoids analyzing one-off queries
+  #   - Use Flash/Haiku for advisor+briefing, Pro only for optimizer_llm
   index_optimizer:
     enabled: false              # Enable LLM-powered index recommendations
     min_query_calls: 100        # Min calls before a query is considered
@@ -80,7 +89,7 @@ llm:
 
 advisor:
   enabled: false
-  interval_seconds: 3600        # How often to run advisor checks
+  interval_seconds: 3600        # How often to run advisor checks (prod: 3600-7200)
   vacuum_enabled: true
   wal_enabled: true
   connection_enabled: true
@@ -135,6 +144,7 @@ forecaster:
 # applies per-query GUC overrides without modifying application queries.
 tuner:
   enabled: true
+  llm_enabled: false             # Use LLM for advanced query tuning
   work_mem_max_mb: 512           # max per-query work_mem hint
   plan_time_ratio: 3.0           # plan/exec ratio threshold for generic plan
   nested_loop_row_threshold: 10000
@@ -159,7 +169,7 @@ api:
   listen_addr: "0.0.0.0:8080"  # REST API + React dashboard
 
 # Hot-reloadable fields (change without restart):
-#   collector.interval_seconds, collector.batch_size
+#   collector.interval_seconds
 #   analyzer.* (all thresholds)
 #   safety.* (all thresholds)
 #   trust.level, trust.tier3_safe, trust.tier3_moderate, trust.maintenance_window
@@ -172,4 +182,4 @@ api:
 #   retention.* (all settings)
 #
 # Non-hot-reloadable (require restart):
-#   mode, postgres.*, mcp.listen_addr, prometheus.listen_addr
+#   mode, postgres.*, mcp.listen_addr, prometheus.listen_addr, api.listen_addr

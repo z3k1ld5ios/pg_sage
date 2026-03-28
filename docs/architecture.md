@@ -21,8 +21,8 @@ pg_sage sidecar (single Go binary)
   │     pg_sequences, pg_locks, pg_stat_replication, pg_stat_bgwriter,
   │     pg_stat_checkpointer, pg_stat_activity, pg_database_size()
   │
-  ├── Analyzer         [every 120s]
-  │   ├── Tier 1: Rules engine (18+ deterministic checks)
+  ├── Analyzer         [every 600s]
+  │   ├── Tier 1: Rules engine (25+ deterministic checks)
   │   └── Tier 2: Index Optimizer (LLM + HypoPG validation)
   │
   ├── Executor         [trust-gated]
@@ -30,7 +30,8 @@ pg_sage sidecar (single Go binary)
   │   ├── Rollback monitor (read + write latency regression)
   │   └── Emergency stop via sage.config
   │
-  ├── MCP Server       [:8080]  Claude Desktop / AI agent interface
+  ├── MCP Server       [:5433]  Claude Desktop / AI agent interface
+  ├── API + Dashboard  [:8080]  REST API + React SPA
   └── Prometheus       [:9187]  Metrics endpoint
 ```
 
@@ -44,7 +45,7 @@ Gathers snapshots every 60s (configurable) from 10+ catalog views. Stores raw da
 
 ### Analyzer (Tier 1 -- Rules Engine)
 
-16+ deterministic rules across 6 categories. No LLM required:
+25+ deterministic rules across 6 categories. No LLM required:
 
 | Category | Rules |
 |----------|-------|
@@ -83,7 +84,31 @@ The executor checks: trust level, trust ramp, per-tier toggles, maintenance wind
 
 ### MCP Server
 
-HTTP + SSE transport on `:8080` (configurable). Implements the Model Context Protocol for Claude Desktop and other AI agents. Exposes resources (health, findings, schema, stats, slow queries, explain plans) and tools (diagnose, briefing, suggest_index, review_migration).
+HTTP + SSE transport on `:5433` (configurable). Implements the Model Context Protocol for Claude Desktop and other AI agents. Exposes resources (health, findings, schema, stats, slow queries, explain plans) and tools (sage_briefing, suggest_index, review_migration, sage_status, sage_emergency_stop, sage_resume).
+
+### API + Dashboard
+
+REST API and embedded React SPA on `:8080` (configurable). Provides 17 endpoints for findings, actions, snapshots, config, forecasts, query hints, alert log, emergency stop, and fleet management.
+
+### Alerting
+
+Monitors new findings and routes notifications to Slack, PagerDuty, or custom webhooks based on severity. Supports quiet hours, cooldown periods, and per-severity routing rules.
+
+### AutoExplain Collector
+
+Detects and uses `auto_explain` (if available) to capture EXPLAIN plans for slow queries. Stores plans for optimizer and diagnostic use.
+
+### Forecaster
+
+Analyzes historical trends to predict disk growth, connection exhaustion, sequence depletion, and cache ratio degradation. Generates proactive findings before problems occur.
+
+### Tuner
+
+Per-query optimization via `pg_hint_plan` (if available). Detects plan-level symptoms (disk sorts, hash spills, bad joins) and applies per-query GUC overrides without modifying application queries.
+
+### Retention
+
+Automatic cleanup of aged snapshots, findings, actions, and explain plans based on configurable retention windows.
 
 ### Prometheus Exporter
 
@@ -94,7 +119,7 @@ Metrics endpoint on `:9187`. Exports findings count by severity, circuit breaker
 ## Data Flow
 
 1. **Collector** gathers `pg_stat_statements`, `pg_stat_user_tables`, `pg_stat_user_indexes` every 60s into `sage.snapshots`.
-2. **Analyzer** runs rules every 120s, then calls `optimizer.Analyze()` if LLM is enabled.
+2. **Analyzer** runs rules every 600s, then calls `optimizer.Analyze()` if LLM is enabled.
 3. **Optimizer** enriches table contexts with `information_schema.columns`, `pg_stats`, plan data, and workload classification.
 4. LLM generates index recommendations as JSON.
 5. **Validator** runs 8 checks; **HypoPG** validates if available.
@@ -112,4 +137,4 @@ On startup, pg_sage acquires advisory lock `710190109` (`hashtext('pg_sage')`), 
 
 ## C Extension (Frozen)
 
-The C extension at `extension/` is frozen at v0.6.0-rc3. When co-deployed on self-managed PostgreSQL, it adds `sage.explain_cache` via executor hooks and in-process SQL functions (`sage.explain()`, `sage.diagnose()`, `sage.briefing()`). The sidecar detects the extension at startup and uses it opportunistically. All core functionality works without it.
+The C extension at `src/` is frozen at v0.6.0-rc3. When co-deployed on self-managed PostgreSQL, it adds `sage.explain_cache` via executor hooks and in-process SQL functions (`sage.explain()`, `sage.diagnose()`, `sage.briefing()`). The sidecar detects the extension at startup and uses it opportunistically. All core functionality works without it.
