@@ -20,9 +20,6 @@ You need four things on your machine:
 | **pgbench** | Generates realistic load | Ships with PostgreSQL |
 | **pg_sage** | The star of the show | See below |
 
-> **No Docker?** A local PostgreSQL 14+ works too. Enable
-> `pg_stat_statements` in `postgresql.conf` and skip Step 1.
-
 > **Running on a cloud VM (GCE, EC2, etc.)?** Everything works
 > the same. Install Docker + postgresql-client:
 > ```bash
@@ -48,18 +45,36 @@ go build -o pg_sage_sidecar ./cmd/pg_sage_sidecar/
 
 ---
 
-## Step 1: Start PostgreSQL
+## Step 1: Start PostgreSQL with Extensions
 
-One command gives you a fresh Postgres 17 with
-`pg_stat_statements` enabled:
+pg_sage works best with four PostgreSQL extensions:
+
+| Extension | What it does | Required? |
+|-----------|-------------|-----------|
+| **pg_stat_statements** | Tracks query stats (calls, time, rows) | Yes |
+| **HypoPG** | Creates hypothetical indexes for cost estimation | No (enhances optimizer) |
+| **pg_hint_plan** | Applies per-query optimizer hints | No (enhances tuner) |
+| **auto_explain** | Captures EXPLAIN plans for slow queries | No (enhances analysis) |
+
+The demo ships a Dockerfile that pre-installs everything.
+Build the image, then start the container:
 
 ```bash
+cd sidecar
+
+# Build the custom image (one-time, takes ~30s)
+docker build -t pg-sage-demo:17 tests/demo/
+
+# Start PostgreSQL with all extensions loaded
 docker run -d --name pg-sage-demo \
   -e POSTGRES_PASSWORD=demopw \
   -p 5432:5432 \
-  postgres:17 \
-  -c shared_preload_libraries=pg_stat_statements \
-  -c pg_stat_statements.track=all
+  pg-sage-demo:17 \
+  -c shared_preload_libraries='pg_stat_statements,pg_hint_plan,auto_explain' \
+  -c pg_stat_statements.track=all \
+  -c auto_explain.log_min_duration=500 \
+  -c auto_explain.log_analyze=on \
+  -c auto_explain.log_format=json
 ```
 
 Wait for it to accept connections:
@@ -70,6 +85,11 @@ docker exec pg-sage-demo pg_isready
 
 You should see `accepting connections`. If not, wait a few
 seconds and try again.
+
+> **No Docker?** A local PostgreSQL 14+ works too. Install
+> the extensions via your package manager (e.g.,
+> `apt install postgresql-17-hypopg postgresql-17-pg-hint-plan`)
+> and add them to `shared_preload_libraries` in `postgresql.conf`.
 
 ---
 
@@ -88,8 +108,21 @@ PGPASSWORD=demopw psql -h localhost -U postgres -c "
 "
 ```
 
+Now enable the extensions:
+
+```bash
+PGPASSWORD=demopw psql -h localhost -U postgres -c "
+  CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+  CREATE EXTENSION IF NOT EXISTS hypopg;
+  CREATE EXTENSION IF NOT EXISTS pg_hint_plan;
+"
+```
+
 These grants let pg_sage read stats, create its `sage.*`
 schema, and (at higher trust levels) kill idle sessions.
+The extensions give pg_sage the ability to test hypothetical
+indexes (HypoPG), apply per-query hints (pg_hint_plan), and
+capture execution plans for slow queries (auto_explain).
 
 ---
 
@@ -267,7 +300,74 @@ production use.
 
 ---
 
-## Step 10: Enable LLM Analysis (Optional)
+## Step 10: See Extensions in Action
+
+The three optional extensions are now working behind the
+scenes. Here is how to verify each one:
+
+### auto_explain — Slow Query Plans
+
+auto_explain automatically logs EXPLAIN output for any query
+exceeding 500ms. Check the PostgreSQL logs:
+
+```bash
+docker logs pg-sage-demo 2>&1 | grep -A5 '"Query Text"' | head -30
+```
+
+pg_sage reads these plans via the `sage.explains` table and
+uses them to make better index recommendations.
+
+### HypoPG — Hypothetical Index Testing
+
+When pg_sage's optimizer suggests a new index, it tests the
+idea with HypoPG first. You can try this yourself:
+
+```bash
+PGPASSWORD=demopw psql -h localhost -U postgres -c "
+  -- Create a hypothetical index (not real, zero I/O)
+  SELECT hypopg_create_index(
+    'CREATE INDEX ON app.audit_log (action)'
+  );
+
+  -- See if the planner would use it
+  EXPLAIN SELECT * FROM app.audit_log
+   WHERE action = 'event_1';
+
+  -- Clean up
+  SELECT hypopg_reset();
+"
+```
+
+You should see an **Index Scan using hypothetical index**
+in the plan. pg_sage does this automatically — it creates
+hypothetical indexes, measures the estimated cost reduction,
+and only recommends indexes that show a real benefit.
+
+### pg_hint_plan — Per-Query Optimizer Hints
+
+When pg_sage's tuner detects a query choosing a bad plan,
+it can inject hints to force a better one. Verify it works:
+
+```bash
+PGPASSWORD=demopw psql -h localhost -U postgres -c "
+  -- Force a seq scan even if an index exists
+  /*+ SeqScan(pgbench_accounts) */
+  EXPLAIN SELECT * FROM pgbench_accounts WHERE aid = 1;
+
+  -- Force an index scan
+  /*+ IndexScan(pgbench_accounts) */
+  EXPLAIN SELECT * FROM pgbench_accounts WHERE aid = 1;
+"
+```
+
+The first plan uses Seq Scan, the second uses Index Scan —
+pg_hint_plan overrides the planner. pg_sage writes hints
+to the `hint_plan.hints` table so they apply automatically
+to matching queries.
+
+---
+
+## Step 11: Enable LLM Analysis (Optional)
 
 This step requires an API key for an OpenAI-compatible
 provider (OpenAI, Gemini, Groq, Ollama, etc.).
@@ -304,7 +404,7 @@ briefing cycle.
 
 ---
 
-## Step 11: Try MCP (Optional)
+## Step 12: Try MCP (Optional)
 
 pg_sage speaks the
 [Model Context Protocol](https://modelcontextprotocol.io/),
@@ -335,7 +435,7 @@ snapshots, and analysis history.
 
 ---
 
-## Step 12: Promote Trust Level
+## Step 13: Promote Trust Level
 
 So far pg_sage has been watching. Now let it act.
 
@@ -405,6 +505,9 @@ Here is every feature you exercised, organized by tier:
 | Sequence exhaustion warnings | 1 | No |
 | Sequential scan detection | 1 | No |
 | Query regression tracking | 1 | No |
+| auto_explain plan capture | 1 | No |
+| HypoPG hypothetical index testing | 2 | Yes |
+| pg_hint_plan query tuning | 1 | No |
 | Trust-gated action executor | 3 | No |
 | Auto-rollback on regression | 3 | No |
 | React dashboard | Core | No |
