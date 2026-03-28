@@ -2,18 +2,60 @@ package api
 
 import "net/http"
 
-// corsMiddleware adds CORS headers for dashboard dev mode.
+// corsMiddleware handles CORS for local dev mode only.
+// The dashboard is served from the same origin in production,
+// so CORS headers are only needed when the Vite dev server
+// runs on a different port. We restrict to localhost origins.
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods",
-			"GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers",
-			"Content-Type, Authorization")
+		origin := r.Header.Get("Origin")
+		if isAllowedOrigin(origin) {
+			w.Header().Set(
+				"Access-Control-Allow-Origin", origin,
+			)
+			w.Header().Set(
+				"Access-Control-Allow-Methods",
+				"GET, POST, PUT, DELETE, OPTIONS",
+			)
+			w.Header().Set(
+				"Access-Control-Allow-Headers",
+				"Content-Type, Authorization",
+			)
+		}
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// isAllowedOrigin returns true for same-origin (empty) or
+// localhost origins used during development.
+func isAllowedOrigin(origin string) bool {
+	if origin == "" {
+		return false
+	}
+	switch origin {
+	case "http://localhost:5173",
+		"http://localhost:8080",
+		"http://127.0.0.1:5173",
+		"http://127.0.0.1:8080":
+		return true
+	}
+	return false
+}
+
+// maxBodyMiddleware wraps r.Body with a size limit for
+// non-GET/HEAD requests to prevent memory exhaustion.
+func maxBodyMiddleware(next http.Handler) http.Handler {
+	const maxBody = 1 << 20 // 1 MB
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet &&
+			r.Method != http.MethodHead &&
+			r.Method != http.MethodOptions {
+			r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		}
 		next.ServeHTTP(w, r)
 	})

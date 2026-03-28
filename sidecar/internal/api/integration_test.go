@@ -254,15 +254,18 @@ func TestIntegration_MetricsPerDatabase(t *testing.T) {
 
 func TestIntegration_CORSPreflight(t *testing.T) {
 	r, _ := setupIntegrationRouter()
-	req := httptest.NewRequest("OPTIONS", "/api/v1/databases", nil)
+	req := httptest.NewRequest(
+		"OPTIONS", "/api/v1/databases", nil)
+	req.Header.Set("Origin", "http://localhost:8080")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
 	if w.Code != 200 {
 		t.Errorf("OPTIONS status: %d", w.Code)
 	}
-	if w.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Error("missing CORS origin")
+	got := w.Header().Get("Access-Control-Allow-Origin")
+	if got != "http://localhost:8080" {
+		t.Errorf("CORS origin: got %q", got)
 	}
 }
 

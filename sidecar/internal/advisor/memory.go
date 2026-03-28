@@ -100,7 +100,7 @@ func analyzeMemory(
 		}
 		spills[i], spills[maxIdx] = spills[maxIdx], spills[i]
 		q := spills[i]
-		truncQuery := q.query
+		truncQuery := llm.StripSQLComments(q.query)
 		if len(truncQuery) > 120 {
 			truncQuery = truncQuery[:120] + "..."
 		}
