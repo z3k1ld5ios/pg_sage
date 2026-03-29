@@ -121,6 +121,7 @@ export function RulesTab() {
           className="flex gap-3 flex-wrap items-end">
           <FormField label="Channel">
             <select value={channelId}
+              data-testid="add-rule-channel"
               onChange={e => setChannelId(e.target.value)}
               className="px-3 py-1.5 rounded text-sm"
               style={inputStyle}>
@@ -133,6 +134,7 @@ export function RulesTab() {
           </FormField>
           <FormField label="Event">
             <select value={event}
+              data-testid="add-rule-event"
               onChange={e => setEvent(e.target.value)}
               className="px-3 py-1.5 rounded text-sm"
               style={inputStyle}>
@@ -143,6 +145,7 @@ export function RulesTab() {
           </FormField>
           <FormField label="Min Severity">
             <select value={minSeverity}
+              data-testid="add-rule-severity"
               onChange={e => setMinSeverity(e.target.value)}
               className="px-3 py-1.5 rounded text-sm"
               style={inputStyle}>
@@ -152,6 +155,7 @@ export function RulesTab() {
             </select>
           </FormField>
           <button type="submit" disabled={creating}
+            data-testid="add-rule-submit"
             className="px-4 py-1.5 rounded text-sm font-medium"
             style={{
               background: 'var(--accent)', color: '#fff',
@@ -181,7 +185,7 @@ function RuleTable({
   return (
     <div className="rounded-lg overflow-hidden"
       style={cardStyle}>
-      <table className="w-full text-sm">
+      <table className="w-full text-sm" data-testid="rules-table">
         <thead>
           <tr style={{
             borderBottom: '1px solid var(--border)',

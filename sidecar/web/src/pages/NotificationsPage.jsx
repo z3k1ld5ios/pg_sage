@@ -13,6 +13,7 @@ export function NotificationsPage() {
       <div className="flex gap-1 mb-4">
         {TABS.map(t => (
           <button key={t} onClick={() => setTab(t)}
+            data-testid={`notifications-tab-${t.toLowerCase()}`}
             className="px-4 py-2 rounded-t text-sm font-medium"
             style={{
               background: tab === t

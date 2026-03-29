@@ -133,7 +133,7 @@ export function QueryHintsPage({ database }) {
       </div>
 
       {hints.length === 0 ? (
-        <EmptyState message="No query hints" />
+        <EmptyState message="No performance optimizations yet. pg_sage identifies slow queries and suggests tuning hints automatically." />
       ) : (
         <DataTable columns={columns} rows={hints} expandable
           renderExpanded={row => (

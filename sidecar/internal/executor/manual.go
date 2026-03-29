@@ -16,12 +16,12 @@ func (e *Executor) ExecuteManual(
 	findingID int, sql, rollbackSQL string,
 	approvedBy *int,
 ) (int64, error) {
-	if CheckEmergencyStop(ctx, e.pool) {
-		return 0, fmt.Errorf("emergency stop active")
-	}
-
 	if err := ValidateExecutorSQL(sql); err != nil {
 		return 0, fmt.Errorf("SQL validation: %w", err)
+	}
+
+	if CheckEmergencyStop(ctx, e.pool) {
+		return 0, fmt.Errorf("emergency stop active")
 	}
 
 	beforeState := e.snapshotBeforeState(ctx)

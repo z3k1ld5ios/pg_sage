@@ -113,7 +113,8 @@ func main() {
 	}
 
 	// Standard mode: connect to monitored database directly.
-	if !cfg.HasMetaDB() {
+	// Fleet mode creates its own per-database pools in initFleetMultiDB.
+	if !cfg.HasMetaDB() && !cfg.IsFleet() {
 		dsn := cfg.Postgres.DSN()
 		if dsn == "" {
 			dsn = envOrDefault("SAGE_DATABASE_URL",
@@ -245,6 +246,10 @@ func initStandalone() {
 	logInfo("startup", "bootstrapping schema…")
 	if err := schema.Bootstrap(ctx, pool); err != nil {
 		logError("startup", "schema bootstrap: %v", err)
+		os.Exit(1)
+	}
+	if err := schema.MigrateConfigSchema(ctx, pool); err != nil {
+		logError("startup", "config schema migration: %v", err)
 		os.Exit(1)
 	}
 
@@ -732,10 +737,6 @@ func initFleetMultiDB() {
 		go store.StartActionExpiry(
 			shutdownCtx, dbActionStore, logStructuredWrapper)
 
-		// Per-database orchestrator.
-		go fleetDBOrchestrator(
-			name, dbPool, dbExec, dbCfg)
-
 		inst := &fleet.DatabaseInstance{
 			Name:      name,
 			Config:    dbCfg,
@@ -751,6 +752,14 @@ func initFleetMultiDB() {
 			},
 		}
 		fleetMgr.RegisterInstance(inst)
+		// Populate findings immediately so API doesn't show zeros
+		// during the first ticker interval.
+		updateInstanceFindings(shutdownCtx, inst)
+
+		// Per-database orchestrator.
+		go fleetDBOrchestrator(
+			name, dbPool, dbExec, dbCfg)
+
 		logInfo("fleet",
 			"db %q: initialized (collector+analyzer+executor)",
 			name)
@@ -780,6 +789,10 @@ func fleetDBOrchestrator(
 			}
 			if dbExec != nil {
 				dbExec.RunCycle(shutdownCtx, false)
+			}
+			// Update fleet status for this instance.
+			if inst := fleetMgr.GetInstance(name); inst != nil {
+				updateInstanceFindings(shutdownCtx, inst)
 			}
 		case <-shutdownCtx.Done():
 			return
@@ -878,7 +891,6 @@ func updateFleetStatus(ctx context.Context) {
 	instances := fleetMgr.Instances()
 	for _, inst := range instances {
 		updateInstanceFindings(ctx, inst)
-		break // standalone has one instance
 	}
 }
 
@@ -886,7 +898,14 @@ func updateInstanceFindings(
 	ctx context.Context,
 	inst *fleet.DatabaseInstance,
 ) {
-	rows, err := pool.Query(ctx,
+	dbPool := inst.Pool
+	if dbPool == nil {
+		dbPool = pool // fallback to global for standalone
+	}
+	if dbPool == nil {
+		return
+	}
+	rows, err := dbPool.Query(ctx,
 		`SELECT severity, count(*)
 		   FROM sage.findings
 		  WHERE status = 'open'
@@ -897,26 +916,27 @@ func updateInstanceFindings(
 	}
 	defer rows.Close()
 
-	inst.Status.FindingsOpen = 0
-	inst.Status.FindingsCritical = 0
-	inst.Status.FindingsWarning = 0
-	inst.Status.FindingsInfo = 0
+	var open, critical, warning, info int
 	for rows.Next() {
 		var sev string
 		var cnt int
 		if err := rows.Scan(&sev, &cnt); err != nil {
 			continue
 		}
-		inst.Status.FindingsOpen += cnt
+		open += cnt
 		switch sev {
 		case "critical":
-			inst.Status.FindingsCritical = cnt
+			critical = cnt
 		case "warning":
-			inst.Status.FindingsWarning = cnt
+			warning = cnt
 		case "info":
-			inst.Status.FindingsInfo = cnt
+			info = cnt
 		}
 	}
+	inst.Status.FindingsOpen = open
+	inst.Status.FindingsCritical = critical
+	inst.Status.FindingsWarning = warning
+	inst.Status.FindingsInfo = info
 	inst.Status.AnalyzerLastRun = time.Now()
 	inst.Status.LastSeen = time.Now()
 }
@@ -973,8 +993,20 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 	// Connection metric.
 	b.WriteString("# HELP pg_sage_connection_up PostgreSQL connection status\n# TYPE pg_sage_connection_up gauge\n")
 	connUp := 0
-	if err := pool.Ping(ctx); err == nil {
-		connUp = 1
+	if pool != nil {
+		if err := pool.Ping(ctx); err == nil {
+			connUp = 1
+		}
+	} else if fleetMgr != nil {
+		// Fleet mode: report up if any instance is connected.
+		for _, inst := range fleetMgr.Instances() {
+			if inst.Pool != nil {
+				if err := inst.Pool.Ping(ctx); err == nil {
+					connUp = 1
+					break
+				}
+			}
+		}
 	}
 	fmt.Fprintf(&b, "pg_sage_connection_up %d\n\n", connUp)
 
@@ -987,8 +1019,15 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 		writeStandaloneMetrics(&b, ctx)
 	}
 
-	// Database metrics (always).
-	writeDatabaseMetrics(&b, ctx)
+	// Fleet metrics.
+	if cfg.Mode == "fleet" && fleetMgr != nil {
+		writeFleetMetrics(&b)
+	}
+
+	// Database metrics (only when global pool exists).
+	if pool != nil {
+		writeDatabaseMetrics(&b, ctx)
+	}
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	fmt.Fprint(w, b.String())
@@ -1110,6 +1149,41 @@ func writeOptimizerMetrics(b *strings.Builder, ctx context.Context) {
 		optEnabled = 1
 	}
 	fmt.Fprintf(b, "pg_sage_optimizer_enabled %d\n\n", optEnabled)
+}
+
+func writeFleetMetrics(b *strings.Builder) {
+	status := fleetMgr.FleetStatus()
+	b.WriteString("# HELP pg_sage_fleet_databases Total fleet databases\n# TYPE pg_sage_fleet_databases gauge\n")
+	fmt.Fprintf(b, "pg_sage_fleet_databases %d\n\n",
+		status.Summary.TotalDatabases)
+
+	b.WriteString("# HELP pg_sage_fleet_healthy Healthy databases\n# TYPE pg_sage_fleet_healthy gauge\n")
+	fmt.Fprintf(b, "pg_sage_fleet_healthy %d\n\n",
+		status.Summary.Healthy)
+
+	b.WriteString("# HELP pg_sage_fleet_findings_total Total open findings\n# TYPE pg_sage_fleet_findings_total gauge\n")
+	fmt.Fprintf(b, "pg_sage_fleet_findings_total %d\n\n",
+		status.Summary.TotalFindings)
+
+	b.WriteString("# HELP pg_sage_fleet_findings_critical Total critical findings\n# TYPE pg_sage_fleet_findings_critical gauge\n")
+	fmt.Fprintf(b, "pg_sage_fleet_findings_critical %d\n\n",
+		status.Summary.TotalCritical)
+
+	b.WriteString("# HELP pg_sage_fleet_instance_findings Per-instance open findings\n# TYPE pg_sage_fleet_instance_findings gauge\n")
+	for _, db := range status.Databases {
+		fmt.Fprintf(b,
+			"pg_sage_fleet_instance_findings{database=%q} %d\n",
+			db.Name, db.Status.FindingsOpen)
+	}
+	b.WriteString("\n")
+
+	b.WriteString("# HELP pg_sage_fleet_instance_health Per-instance health score\n# TYPE pg_sage_fleet_instance_health gauge\n")
+	for _, db := range status.Databases {
+		fmt.Fprintf(b,
+			"pg_sage_fleet_instance_health{database=%q} %d\n",
+			db.Name, db.Status.HealthScore)
+	}
+	b.WriteString("\n")
 }
 
 func writeDatabaseMetrics(b *strings.Builder, ctx context.Context) {
@@ -1246,6 +1320,9 @@ func clientIP(r *http.Request) string {
 // --- Detection ---
 
 func detectExtension() bool {
+	if pool == nil {
+		return false // fleet mode: no global pool
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	var exists bool
@@ -1264,6 +1341,9 @@ func detectExtension() bool {
 }
 
 func detectCloudEnvironment() string {
+	if pool == nil {
+		return "unknown" // fleet mode: detected per-database
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -1288,6 +1368,9 @@ func detectCloudEnvironment() string {
 }
 
 func poolHealthCheck() {
+	if pool == nil {
+		return // fleet mode: no global pool to health-check
+	}
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {

@@ -79,7 +79,21 @@ func addConfigColumns(
 func addConfigCompositeIndex(
 	ctx context.Context, pool *pgxpool.Pool,
 ) error {
+	// Drop the old single-column PK on (key) so per-database
+	// overrides can coexist with global config rows.
 	_, err := pool.Exec(ctx, `
+		DO $$ BEGIN
+			ALTER TABLE sage.config
+				DROP CONSTRAINT IF EXISTS config_pkey;
+		EXCEPTION
+			WHEN others THEN NULL;
+		END $$;
+	`)
+	if err != nil {
+		return fmt.Errorf("dropping old PK: %w", err)
+	}
+
+	_, err = pool.Exec(ctx, `
 		DO $$ BEGIN
 			CREATE UNIQUE INDEX IF NOT EXISTS
 				idx_config_key_db

@@ -114,7 +114,7 @@ export function ForecastsPage({ database }) {
   const forecasts = data?.forecasts || []
 
   if (forecasts.length === 0) {
-    return <EmptyState message="No workload forecasts available" />
+    return <EmptyState message="No workload forecasts yet. pg_sage builds predictions as it collects more data about your database patterns." />
   }
 
   const counts = { critical: 0, warning: 0, info: 0 }

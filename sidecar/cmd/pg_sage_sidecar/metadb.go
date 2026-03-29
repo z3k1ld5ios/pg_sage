@@ -283,6 +283,13 @@ func bootstrapAndRegister(
 	dbExec := buildExecutor(rec, dbPool, dbAnal)
 
 	registerHealthyInstance(rec, dbPool, dbColl, dbAnal, dbExec)
+
+	// Populate findings immediately then start orchestrator.
+	if inst := fleetMgr.GetInstance(rec.Name); inst != nil {
+		updateInstanceFindings(ctx, inst)
+	}
+	dbCfg := storeRecordToDBConfig(rec)
+	go fleetDBOrchestrator(rec.Name, dbPool, dbExec, dbCfg)
 }
 
 // detectPGVersion queries the PG version number from the pool.

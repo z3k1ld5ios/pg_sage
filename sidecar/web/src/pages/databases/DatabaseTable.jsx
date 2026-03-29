@@ -40,7 +40,7 @@ export function DatabaseTable({ databases, onEdit, onDelete, onError }) {
         background: 'var(--bg-card)',
         border: '1px solid var(--border)',
       }}>
-      <table className="w-full text-sm">
+      <table className="w-full text-sm" data-testid="databases-table">
         <thead>
           <tr style={{ borderBottom: '1px solid var(--border)' }}>
             {['Name', 'Host', 'Trust Level', 'Execution Mode',
@@ -89,7 +89,8 @@ function DatabaseRow({
   }
 
   return (
-    <tr style={{ borderBottom: '1px solid var(--border)' }}>
+    <tr data-testid="db-row"
+      style={{ borderBottom: '1px solid var(--border)' }}>
       <td className="px-4 py-2"
         style={{ color: 'var(--text-primary)' }}>
         {db.name}
@@ -117,16 +118,19 @@ function DatabaseRow({
       <td className="px-4 py-2 text-right">
         <div className="flex gap-2 justify-end">
           <button onClick={() => onTest(db)} disabled={testing}
+            data-testid="db-test-button"
             className="px-2 py-1 rounded text-xs"
             style={{ color: 'var(--accent)' }}>
             {testing ? 'Testing...' : 'Test'}
           </button>
           <button onClick={() => onEdit(db)}
+            data-testid="db-edit-button"
             className="px-2 py-1 rounded text-xs"
             style={{ color: 'var(--text-secondary)' }}>
             Edit
           </button>
           <button onClick={() => onDelete(db)}
+            data-testid="db-delete-button"
             className="px-2 py-1 rounded text-xs"
             style={{ color: '#ef4444' }}>
             Delete

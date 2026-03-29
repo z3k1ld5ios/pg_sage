@@ -96,7 +96,8 @@ export default function App() {
   })()
 
   return (
-    <Layout databases={databases} selectedDB={selectedDB}
+    <Layout data-testid="app-loaded" databases={databases}
+      selectedDB={selectedDB}
       onSelectDB={setSelectedDB} user={user}
       onLogout={handleLogout}>
       {page}

@@ -1,6 +1,7 @@
-export function DatabasePicker({ databases, selected, onSelect }) {
+export function DatabasePicker({ databases, selected, onSelect, ...rest }) {
   return (
     <select value={selected} onChange={e => onSelect(e.target.value)}
+      {...rest}
       className="px-3 py-1.5 rounded text-sm"
       style={{
         background: 'var(--bg-hover)',

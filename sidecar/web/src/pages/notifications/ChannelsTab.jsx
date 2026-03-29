@@ -126,12 +126,14 @@ export function ChannelsTab() {
           <div className="flex gap-3 flex-wrap items-end">
             <FormField label="Name">
               <input value={name} required
+                data-testid="add-channel-name"
                 onChange={e => setName(e.target.value)}
                 className="px-3 py-1.5 rounded text-sm"
                 style={inputStyle} />
             </FormField>
             <FormField label="Type">
               <select value={type}
+                data-testid="add-channel-type"
                 onChange={e =>
                   handleTypeChange(e.target.value)}
                 className="px-3 py-1.5 rounded text-sm"
@@ -145,6 +147,7 @@ export function ChannelsTab() {
             config={config} setConfig={setConfig} />
           <div>
             <button type="submit" disabled={creating}
+              data-testid="add-channel-submit"
               className="px-4 py-1.5 rounded text-sm font-medium"
               style={{
                 background: 'var(--accent)', color: '#fff',
@@ -239,7 +242,7 @@ function ChannelTable({
   return (
     <div className="rounded-lg overflow-hidden"
       style={cardStyle}>
-      <table className="w-full text-sm">
+      <table className="w-full text-sm" data-testid="channels-table">
         <thead>
           <tr style={{
             borderBottom: '1px solid var(--border)',

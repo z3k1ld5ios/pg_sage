@@ -142,6 +142,13 @@ func (d *Dispatcher) logDelivery(
 	channelID int, event Event,
 	status, errMsg string,
 ) error {
+	if d.pool == nil {
+		if errMsg != "" {
+			return fmt.Errorf("send failed: %s", errMsg)
+		}
+		return nil
+	}
+
 	qctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 

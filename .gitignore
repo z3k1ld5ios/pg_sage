@@ -50,3 +50,7 @@ sidecar/aurora_test_output.log
 # Local test configs
 sidecar/hint_test_config.yaml
 sidecar/test_config.yaml
+e2e_config.yaml
+sidecar/tests/integration/pg_sage_sidecar
+e2e/test-results/
+sidecar/tasks/deploy_config.yaml

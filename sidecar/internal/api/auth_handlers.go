@@ -185,7 +185,7 @@ func deleteUserHandler(
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := r.PathValue("id")
 		id, err := strconv.Atoi(idStr)
-		if err != nil {
+		if err != nil || id < 1 {
 			jsonError(w, "invalid user ID",
 				http.StatusBadRequest)
 			return
@@ -203,13 +203,106 @@ func deleteUserHandler(
 	}
 }
 
+func oauthConfigHandler(
+	provider *auth.OAuthProvider,
+	providerName string,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		enabled := provider != nil
+		jsonResponse(w, map[string]any{
+			"enabled":  enabled,
+			"provider": providerName,
+		})
+	}
+}
+
+func oauthAuthorizeHandler(
+	provider *auth.OAuthProvider,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if provider == nil {
+			jsonError(w, "OAuth not configured",
+				http.StatusNotFound)
+			return
+		}
+		authURL, err := provider.AuthorizationURL()
+		if err != nil {
+			jsonError(w, "failed to generate auth URL: "+err.Error(),
+				http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]string{"url": authURL})
+	}
+}
+
+func oauthCallbackHandler(
+	provider *auth.OAuthProvider,
+	pool *pgxpool.Pool,
+	defaultRole string,
+	providerName string,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if provider == nil {
+			jsonError(w, "OAuth not configured",
+				http.StatusNotFound)
+			return
+		}
+		code := r.URL.Query().Get("code")
+		state := r.URL.Query().Get("state")
+		if code == "" || state == "" {
+			jsonError(w, "missing code or state parameter",
+				http.StatusBadRequest)
+			return
+		}
+
+		email, err := provider.Exchange(
+			r.Context(), code, state,
+		)
+		if err != nil {
+			jsonError(w, "OAuth exchange failed: "+err.Error(),
+				http.StatusUnauthorized)
+			return
+		}
+
+		user, err := auth.FindOrCreateOAuthUser(
+			r.Context(), pool, email, providerName,
+			defaultRole,
+		)
+		if err != nil {
+			jsonError(w, "failed to create user: "+err.Error(),
+				http.StatusInternalServerError)
+			return
+		}
+
+		sessionID, err := auth.CreateSession(
+			r.Context(), pool, user.ID,
+		)
+		if err != nil {
+			jsonError(w, "failed to create session",
+				http.StatusInternalServerError)
+			return
+		}
+
+		http.SetCookie(w, &http.Cookie{
+			Name:     "sage_session",
+			Value:    sessionID,
+			Path:     "/",
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   int(auth.SessionDuration.Seconds()),
+		})
+
+		http.Redirect(w, r, "/", http.StatusFound)
+	}
+}
+
 func updateUserRoleHandler(
 	pool *pgxpool.Pool,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := r.PathValue("id")
 		id, err := strconv.Atoi(idStr)
-		if err != nil {
+		if err != nil || id < 1 {
 			jsonError(w, "invalid user ID",
 				http.StatusBadRequest)
 			return

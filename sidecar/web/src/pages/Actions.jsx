@@ -54,6 +54,7 @@ function TabBar({ tab, setTab, pendingCount }) {
     <div className="flex gap-2">
       {tabs.map(t => (
         <button key={t.key} onClick={() => setTab(t.key)}
+          data-testid={`actions-tab-${t.key}`}
           className="px-3 py-1.5 rounded text-sm"
           style={{
             background: tab === t.key
@@ -88,6 +89,19 @@ function ExecutedTab({ data, loading, error, refetch }) {
   const columns = [
     { key: 'action_type', label: 'Type' },
     {
+      key: 'summary', label: 'Summary',
+      render: r => {
+        const t = (r.action_type || '').toLowerCase()
+        if (t.includes('index') && r.outcome === 'success') {
+          return 'Index operation completed successfully'
+        }
+        if (t.includes('vacuum')) return 'Table maintenance completed'
+        if (t.includes('analyze')) return 'Statistics updated'
+        const raw = r.action_type || ''
+        return raw.charAt(0).toUpperCase() + raw.slice(1)
+      },
+    },
+    {
       key: 'outcome', label: 'Outcome',
       render: r => (
         <span style={{
@@ -106,11 +120,12 @@ function ExecutedTab({ data, loading, error, refetch }) {
   ]
 
   if (actions.length === 0) {
-    return <EmptyState message="No actions recorded" />
+    return <EmptyState message="No actions have been executed yet. Actions will appear here as pg_sage works on your databases." />
   }
 
   return (
-    <DataTable columns={columns} rows={actions} expandable
+    <DataTable data-testid="executed-actions-table"
+      columns={columns} rows={actions} expandable
       renderExpanded={row => (
         <div className="space-y-3">
           <div>
@@ -199,16 +214,24 @@ function PendingTab({
 
   const columns = [
     { key: 'action_risk', label: 'Risk',
-      render: r => (
-        <span style={{
-          color: r.action_risk === 'safe'
-            ? 'var(--green)'
-            : r.action_risk === 'moderate'
-              ? 'var(--yellow)' : 'var(--red)',
-        }}>
-          {r.action_risk}
-        </span>
-      ),
+      render: r => {
+        const riskMap = {
+          safe: { label: 'Low Risk', color: 'var(--green)' },
+          moderate: {
+            label: 'Moderate Risk', color: 'var(--yellow)',
+          },
+          high: { label: 'High Risk', color: 'var(--red)' },
+        }
+        const info = riskMap[r.action_risk] || {
+          label: r.action_risk,
+          color: 'var(--text-secondary)',
+        }
+        return (
+          <span style={{ color: info.color }}>
+            {info.label}
+          </span>
+        )
+      },
     },
     { key: 'finding_id', label: 'Finding' },
     {
@@ -220,6 +243,7 @@ function PendingTab({
       render: r => (
         <div className="flex gap-2">
           <button onClick={() => handleApprove(r.id)}
+            data-testid="approve-button"
             className="px-2 py-1 rounded text-xs"
             style={{
               background: 'var(--green)',
@@ -230,6 +254,7 @@ function PendingTab({
           <button
             onClick={() => setRejectId(
               rejectId === r.id ? null : r.id)}
+            data-testid="reject-button"
             className="px-2 py-1 rounded text-xs"
             style={{
               background: 'var(--red)',
@@ -243,11 +268,17 @@ function PendingTab({
   ]
 
   if (actions.length === 0) {
-    return <EmptyState message="No pending approvals" />
+    return <EmptyState message="No actions waiting for approval. When pg_sage identifies improvements that need your OK, they'll appear here." />
   }
 
   return (
     <div className="space-y-3">
+      <p data-testid="pending-help-text"
+        className="text-sm"
+        style={{ color: 'var(--text-secondary)' }}>
+        These actions are waiting for your review. Approve to
+        execute, or reject with a reason.
+      </p>
       {actionMsg && (
         <div className="p-2 rounded text-sm"
           style={{
@@ -259,7 +290,8 @@ function PendingTab({
           {actionMsg.text}
         </div>
       )}
-      <DataTable columns={columns} rows={actions} expandable
+      <DataTable data-testid="pending-actions-table"
+        columns={columns} rows={actions} expandable
         renderExpanded={row => (
           <div className="space-y-3">
             <div>
