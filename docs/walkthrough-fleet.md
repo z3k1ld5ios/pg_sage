@@ -537,7 +537,8 @@ These can be scraped by Prometheus and visualized in Grafana.
 ```bash
 # Login
 curl -c cookies -X POST http://localhost:8080/api/v1/auth/login \
-  -H 'Content-Type: application/json' -d '{"email":"admin","password":"admin"}'
+  -H 'Content-Type: application/json' \
+  -d '{"email":"admin@pgsage.local","password":"password123"}'
 
 # Fleet overview
 curl -b cookies http://localhost:8080/api/v1/databases
