@@ -3,7 +3,9 @@
 package store
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pg-sage/sidecar/internal/notify"
 )
@@ -12,8 +14,9 @@ func TestCreateChannel(t *testing.T) {
 	pool, ctx := requireDB(t)
 	ns := NewNotificationStore(pool, nil)
 
+	name := fmt.Sprintf("test-slack-%d", time.Now().UnixNano())
 	cfg := map[string]string{"webhook_url": "https://hooks.slack.com/test"}
-	id, err := ns.CreateChannel(ctx, "test-slack", "slack", cfg, 1)
+	id, err := ns.CreateChannel(ctx, name, "slack", cfg, 1)
 	if err != nil {
 		t.Fatalf("CreateChannel: %v", err)
 	}
