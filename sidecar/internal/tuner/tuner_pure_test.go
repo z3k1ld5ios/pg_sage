@@ -1,0 +1,190 @@
+package tuner
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestSymptomNames(t *testing.T) {
+	symptoms := []PlanSymptom{
+		{Kind: SymptomDiskSort},
+		{Kind: SymptomHashSpill},
+		{Kind: SymptomHighPlanTime},
+	}
+	names := symptomNames(symptoms)
+	if len(names) != 3 {
+		t.Fatalf("got %d names, want 3", len(names))
+	}
+	if names[0] != string(SymptomDiskSort) {
+		t.Errorf("names[0] = %q", names[0])
+	}
+	if names[1] != string(SymptomHashSpill) {
+		t.Errorf("names[1] = %q", names[1])
+	}
+	if names[2] != string(SymptomHighPlanTime) {
+		t.Errorf("names[2] = %q", names[2])
+	}
+}
+
+func TestSymptomNames_Empty(t *testing.T) {
+	names := symptomNames(nil)
+	if len(names) != 0 {
+		t.Errorf("got %d names, want 0", len(names))
+	}
+}
+
+func TestBuildTitle_SingleSymptom(t *testing.T) {
+	tests := []struct {
+		kind SymptomKind
+		want string
+	}{
+		{SymptomDiskSort, "work_mem"},
+		{SymptomHashSpill, "work_mem"},
+		{SymptomHighPlanTime, "generic plan"},
+		{SymptomBadNestedLoop, "nested loop"},
+		{SymptomSeqScanWithIndex, "index scan"},
+		{SymptomParallelDisabled, "parallel"},
+	}
+	for _, tt := range tests {
+		title := buildTitle([]PlanSymptom{{Kind: tt.kind}})
+		if !strings.Contains(title, tt.want) {
+			t.Errorf("buildTitle(%s) = %q, want to contain %q",
+				tt.kind, title, tt.want)
+		}
+	}
+}
+
+func TestBuildTitle_UnknownSymptom(t *testing.T) {
+	title := buildTitle([]PlanSymptom{
+		{Kind: SymptomKind("unknown_symptom")},
+	})
+	if title != "Per-query tuning recommendation" {
+		t.Errorf("got %q, want default title", title)
+	}
+}
+
+func TestBuildTitle_MultipleSymptoms(t *testing.T) {
+	symptoms := []PlanSymptom{
+		{Kind: SymptomDiskSort},
+		{Kind: SymptomHighPlanTime},
+	}
+	title := buildTitle(symptoms)
+	if !strings.Contains(title, "work_mem") {
+		t.Errorf("missing work_mem in %q", title)
+	}
+	if !strings.Contains(title, "generic plan") {
+		t.Errorf("missing generic plan in %q", title)
+	}
+	if !strings.Contains(title, "+") {
+		t.Errorf("missing + separator in %q", title)
+	}
+}
+
+func TestMultiSymptomTitle_AllKinds(t *testing.T) {
+	symptoms := []PlanSymptom{
+		{Kind: SymptomDiskSort},
+		{Kind: SymptomHashSpill},
+		{Kind: SymptomHighPlanTime},
+		{Kind: SymptomBadNestedLoop},
+		{Kind: SymptomSeqScanWithIndex},
+		{Kind: SymptomParallelDisabled},
+	}
+	title := multiSymptomTitle(symptoms)
+	for _, want := range []string{
+		"work_mem", "generic plan", "join strategy",
+		"index scan", "parallel workers",
+	} {
+		if !strings.Contains(title, want) {
+			t.Errorf("missing %q in %q", want, title)
+		}
+	}
+}
+
+func TestMultiSymptomTitle_NoRecognizedKinds(t *testing.T) {
+	symptoms := []PlanSymptom{
+		{Kind: SymptomKind("future_symptom")},
+	}
+	title := multiSymptomTitle(symptoms)
+	if title != "Per-query tuning recommendation" {
+		t.Errorf("got %q, want default", title)
+	}
+}
+
+func TestMultiSymptomTitle_DedupsDiskSortAndHashSpill(t *testing.T) {
+	symptoms := []PlanSymptom{
+		{Kind: SymptomDiskSort},
+		{Kind: SymptomHashSpill},
+	}
+	title := multiSymptomTitle(symptoms)
+	// Both map to work_mem, should appear once
+	if strings.Count(title, "work_mem") != 1 {
+		t.Errorf("work_mem should appear once in %q", title)
+	}
+}
+
+func TestBuildRationale(t *testing.T) {
+	prescriptions := []Prescription{
+		{Rationale: "reduce disk sorts"},
+		{Rationale: "avoid hash spills"},
+	}
+	got := buildRationale(prescriptions)
+	if got != "reduce disk sorts; avoid hash spills" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestBuildRationale_Empty(t *testing.T) {
+	got := buildRationale(nil)
+	if got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+}
+
+func TestBuildRationale_Single(t *testing.T) {
+	got := buildRationale([]Prescription{
+		{Rationale: "only one"},
+	})
+	if got != "only one" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestBuildInsertSQL(t *testing.T) {
+	sql := BuildInsertSQL(12345, "SET work_mem = '256MB'")
+	if sql == "" {
+		t.Fatal("BuildInsertSQL returned empty string")
+	}
+	if !strings.Contains(sql, "12345") {
+		t.Errorf("should contain queryid 12345")
+	}
+	if !strings.Contains(sql, "work_mem") {
+		t.Errorf("should contain hint SQL")
+	}
+}
+
+func TestBuildInsertSQL_EscapesSingleQuotes(t *testing.T) {
+	sql := BuildInsertSQL(1, "it's a hint")
+	if !strings.Contains(sql, "it''s") {
+		t.Errorf("single quotes not escaped: %s", sql)
+	}
+}
+
+func TestBuildInsertSQL_OnConflict(t *testing.T) {
+	sql := BuildInsertSQL(1, "hint")
+	if !strings.Contains(sql, "ON CONFLICT") {
+		t.Errorf("should contain ON CONFLICT: %s", sql)
+	}
+}
+
+func TestBuildDeleteSQL(t *testing.T) {
+	sql := BuildDeleteSQL(12345)
+	if sql == "" {
+		t.Fatal("BuildDeleteSQL returned empty string")
+	}
+	if !strings.Contains(sql, "12345") {
+		t.Errorf("should contain queryid 12345")
+	}
+	if !strings.Contains(sql, "DELETE") {
+		t.Errorf("should contain DELETE: %s", sql)
+	}
+}
