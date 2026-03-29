@@ -99,7 +99,6 @@ func PersistTrustRampStart(
 			qctx2,
 			"INSERT INTO sage.config (key, value, updated_by) "+
 				"VALUES ('trust_ramp_start', $1, 'bootstrap') "+
-				"ON CONFLICT (key) DO NOTHING "+
 				"RETURNING value::timestamptz",
 			configRampStart.Format(time.RFC3339Nano),
 		).Scan(&t)
@@ -108,7 +107,6 @@ func PersistTrustRampStart(
 			qctx2,
 			"INSERT INTO sage.config (key, value, updated_by) "+
 				"VALUES ('trust_ramp_start', to_char(now(), 'YYYY-MM-DD\"T\"HH24:MI:SS.USOF'), 'bootstrap') "+
-				"ON CONFLICT (key) DO NOTHING "+
 				"RETURNING value::timestamptz",
 		).Scan(&t)
 	}
@@ -208,6 +206,28 @@ func ensureTablesExist(ctx context.Context, pool *pgxpool.Pool) error {
 			}
 		}
 	}
+
+	// Run idempotent migrations for existing schemas.
+	if err := runMigrations(ctx, pool); err != nil {
+		return fmt.Errorf("running migrations: %w", err)
+	}
+	return nil
+}
+
+// runMigrations applies idempotent schema changes to existing installs.
+func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
+	qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	migrations := []string{
+		ddlActionLogApprovalCols,
+		ddlUsersOAuth,
+	}
+	for _, m := range migrations {
+		if _, err := pool.Exec(qctx, m); err != nil {
+			return fmt.Errorf("migration failed: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -223,7 +243,7 @@ CREATE SCHEMA sage;
 	ddlUsers + ddlSessions + ddlDatabases +
 	ddlNotificationChannels + ddlNotificationRules +
 	ddlNotificationLog + ddlActionQueue +
-	ddlActionLogApprovalCols
+	ddlActionLogApprovalCols + ddlUsersOAuth
 
 const ddlActionLog = `
 CREATE TABLE IF NOT EXISTS sage.action_log (
@@ -419,4 +439,11 @@ ALTER TABLE sage.action_log
     ADD COLUMN IF NOT EXISTS approved_by INT;
 ALTER TABLE sage.action_log
     ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
+`
+
+const ddlUsersOAuth = `
+ALTER TABLE sage.users
+    ADD COLUMN IF NOT EXISTS oauth_provider TEXT DEFAULT '';
+ALTER TABLE sage.users
+    ALTER COLUMN password DROP NOT NULL;
 `

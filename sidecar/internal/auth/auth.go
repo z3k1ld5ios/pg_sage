@@ -59,7 +59,7 @@ func Authenticate(
 	email, password string,
 ) (*User, error) {
 	var u User
-	var hash string
+	var hash *string
 	err := pool.QueryRow(ctx,
 		"SELECT id, email, password, role, created_at, last_login "+
 			"FROM sage.users WHERE email = $1",
@@ -72,7 +72,7 @@ func Authenticate(
 		}
 		return nil, fmt.Errorf("querying user: %w", err)
 	}
-	if !CheckPassword(hash, password) {
+	if hash == nil || !CheckPassword(*hash, password) {
 		return nil, fmt.Errorf("invalid credentials")
 	}
 	_, err = pool.Exec(ctx,
@@ -214,6 +214,50 @@ func UpdateUserRole(
 		return fmt.Errorf("user not found")
 	}
 	return nil
+}
+
+// FindOrCreateOAuthUser looks up a user by email. If not found,
+// creates one with the given provider and default role.
+func FindOrCreateOAuthUser(
+	ctx context.Context, pool *pgxpool.Pool,
+	email, provider, defaultRole string,
+) (*User, error) {
+	if defaultRole == "" {
+		defaultRole = RoleViewer
+	}
+	if !IsValidRole(defaultRole) {
+		return nil, fmt.Errorf("invalid default role: %q", defaultRole)
+	}
+
+	var u User
+	err := pool.QueryRow(ctx,
+		"SELECT id, email, role, created_at, last_login "+
+			"FROM sage.users WHERE email = $1",
+		email,
+	).Scan(&u.ID, &u.Email, &u.Role,
+		&u.CreatedAt, &u.LastLogin)
+	if err == nil {
+		_, _ = pool.Exec(ctx,
+			"UPDATE sage.users SET last_login = now() WHERE id = $1",
+			u.ID,
+		)
+		return &u, nil
+	}
+	if err != pgx.ErrNoRows {
+		return nil, fmt.Errorf("querying oauth user: %w", err)
+	}
+
+	err = pool.QueryRow(ctx,
+		"INSERT INTO sage.users (email, role, oauth_provider) "+
+			"VALUES ($1, $2, $3) RETURNING id, created_at",
+		email, defaultRole, provider,
+	).Scan(&u.ID, &u.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("creating oauth user: %w", err)
+	}
+	u.Email = email
+	u.Role = defaultRole
+	return &u, nil
 }
 
 // UserCount returns the total number of users.

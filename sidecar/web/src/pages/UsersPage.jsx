@@ -114,6 +114,7 @@ export function UsersPage() {
               Email
             </label>
             <input type="email" value={email} required
+              data-testid="add-user-email"
               onChange={e => setEmail(e.target.value)}
               className="px-3 py-1.5 rounded text-sm"
               style={inputStyle} />
@@ -124,6 +125,7 @@ export function UsersPage() {
               Password
             </label>
             <input type="password" value={password} required
+              data-testid="add-user-password"
               onChange={e => setPassword(e.target.value)}
               className="px-3 py-1.5 rounded text-sm"
               style={inputStyle} />
@@ -134,6 +136,7 @@ export function UsersPage() {
               Role
             </label>
             <select value={role}
+              data-testid="add-user-role"
               onChange={e => setRole(e.target.value)}
               className="px-3 py-1.5 rounded text-sm"
               style={inputStyle}>
@@ -143,6 +146,7 @@ export function UsersPage() {
             </select>
           </div>
           <button type="submit" disabled={creating}
+            data-testid="add-user-submit"
             className="px-4 py-1.5 rounded text-sm font-medium"
             style={{
               background: 'var(--accent)',
@@ -158,7 +162,7 @@ export function UsersPage() {
           background: 'var(--bg-card)',
           border: '1px solid var(--border)',
         }}>
-        <table className="w-full text-sm">
+        <table className="w-full text-sm" data-testid="users-table">
           <thead>
             <tr style={{ borderBottom: '1px solid var(--border)' }}>
               {['Email', 'Role', 'Created', 'Last Login', ''].map(
@@ -206,6 +210,7 @@ export function UsersPage() {
                 <td className="px-4 py-2 text-right">
                   <button
                     onClick={() => handleDelete(u.id, u.email)}
+                    data-testid="user-delete-button"
                     className="px-2 py-1 rounded text-xs"
                     style={{ color: '#ef4444' }}>
                     Delete

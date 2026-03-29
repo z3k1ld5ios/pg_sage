@@ -1,11 +1,12 @@
 import { useState, Fragment } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 
-export function DataTable({ columns, rows, expandable, renderExpanded }) {
+export function DataTable({ columns, rows, expandable, renderExpanded, ...rest }) {
   const [expanded, setExpanded] = useState(null)
 
   return (
     <div className="rounded overflow-hidden"
+      {...rest}
       style={{ border: '1px solid var(--border)' }}>
       <table className="w-full text-sm">
         <thead>

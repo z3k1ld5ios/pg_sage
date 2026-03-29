@@ -92,24 +92,28 @@ export function DatabaseForm({ db, onClose, onError }) {
         style={{ color: 'var(--text-primary)' }}>
         {isEdit ? `Edit ${db.name}` : 'Add Database'}
       </h2>
-      <form onSubmit={handleSubmit}>
+      <form onSubmit={handleSubmit} data-testid="db-form">
         <div className="grid grid-cols-3 gap-3 mb-3">
           <Field label="Name" value={form.name}
-            onChange={set('name')} style={inputStyle} required />
+            onChange={set('name')} style={inputStyle} required
+            data-testid="db-name" />
           <Field label="Host" value={form.host}
-            onChange={set('host')} style={inputStyle} required />
+            onChange={set('host')} style={inputStyle} required
+            data-testid="db-host" />
           <Field label="Port" type="number" value={form.port}
-            onChange={set('port')} style={inputStyle} required />
+            onChange={set('port')} style={inputStyle} required
+            data-testid="db-port" />
           <Field label="Database" value={form.database_name}
             onChange={set('database_name')} style={inputStyle}
-            required />
+            required data-testid="db-database" />
           <Field label="Username" value={form.username}
-            onChange={set('username')} style={inputStyle} required />
+            onChange={set('username')} style={inputStyle} required
+            data-testid="db-username" />
           <Field label="Password" type="password"
             value={form.password} onChange={set('password')}
             style={inputStyle}
             placeholder={isEdit ? '(unchanged)' : ''}
-            required={!isEdit} />
+            required={!isEdit} data-testid="db-password" />
           <SelectField label="SSL Mode" value={form.sslmode}
             onChange={set('sslmode')} options={SSL_MODES}
             style={inputStyle} />
@@ -128,6 +132,7 @@ export function DatabaseForm({ db, onClose, onError }) {
 
         <div className="flex gap-2 mt-3">
           <button type="submit" disabled={saving}
+            data-testid="db-save-button"
             className="px-4 py-1.5 rounded text-sm font-medium"
             style={{ background: 'var(--accent)', color: '#fff' }}>
             {saving ? 'Saving...' : 'Save'}
@@ -145,6 +150,7 @@ export function DatabaseForm({ db, onClose, onError }) {
             </button>
           )}
           <button type="button" onClick={onClose}
+            data-testid="db-cancel-button"
             className="px-4 py-1.5 rounded text-sm"
             style={{ color: 'var(--text-secondary)' }}>
             Cancel
@@ -157,7 +163,7 @@ export function DatabaseForm({ db, onClose, onError }) {
 
 function Field({
   label, type = 'text', value, onChange, style,
-  required, placeholder,
+  required, placeholder, 'data-testid': testId,
 }) {
   return (
     <div>
@@ -165,6 +171,7 @@ function Field({
         style={{ color: 'var(--text-secondary)' }}>{label}</label>
       <input type={type} value={value} onChange={onChange}
         required={required} placeholder={placeholder}
+        data-testid={testId}
         className="w-full px-3 py-1.5 rounded text-sm"
         style={style} />
     </div>

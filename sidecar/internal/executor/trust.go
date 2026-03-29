@@ -156,7 +156,7 @@ func SetEmergencyStop(
 	_, err := pool.Exec(ctx,
 		`INSERT INTO sage.config (key, value, updated_at, updated_by)
 		 VALUES ('emergency_stop', $1, now(), 'executor')
-		 ON CONFLICT (key) DO UPDATE
+		 ON CONFLICT (key, COALESCE(database_id, 0)) DO UPDATE
 		 SET value = $1, updated_at = now(), updated_by = 'executor'`,
 		val,
 	)

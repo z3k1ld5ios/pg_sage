@@ -108,6 +108,9 @@ func (c *Config) normalize() {
 			if d.TrustLevel == "" && c.Defaults.TrustLevel != "" {
 				d.TrustLevel = c.Defaults.TrustLevel
 			}
+			if d.TrustLevel == "" && c.Trust.Level != "" {
+				d.TrustLevel = c.Trust.Level
+			}
 			if d.CollectorIntervalSeconds == 0 && c.Defaults.CollectorIntervalSeconds != 0 {
 				d.CollectorIntervalSeconds = c.Defaults.CollectorIntervalSeconds
 			}

@@ -35,6 +35,12 @@ func SessionAuthMiddleware(
 				return
 			}
 
+			if pool == nil {
+				jsonError(w, "session invalid or expired",
+					http.StatusUnauthorized)
+				return
+			}
+
 			user, err := auth.ValidateSession(
 				r.Context(), pool, cookie.Value,
 			)
@@ -91,6 +97,10 @@ func UserFromContext(ctx context.Context) *auth.User {
 func shouldSkipAuth(path string) bool {
 	switch {
 	case path == "/api/v1/auth/login":
+		return true
+	case path == "/api/v1/auth/oauth/callback":
+		return true
+	case path == "/api/v1/auth/oauth/config":
 		return true
 	case path == "/health":
 		return true

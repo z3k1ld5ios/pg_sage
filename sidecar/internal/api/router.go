@@ -1,11 +1,14 @@
 package api
 
 import (
+	"context"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pg-sage/sidecar/internal/auth"
 	"github.com/pg-sage/sidecar/internal/config"
 	"github.com/pg-sage/sidecar/internal/executor"
 	"github.com/pg-sage/sidecar/internal/fleet"
@@ -57,7 +60,21 @@ func NewRouterFull(
 	apiMux := http.NewServeMux()
 	registerAPIRoutes(apiMux, mgr, cfg)
 	if pool != nil {
-		registerAuthRoutes(apiMux, pool)
+		var oauthProvider *auth.OAuthProvider
+		if cfg.OAuth.Enabled {
+			oauthProvider = auth.NewOAuthProvider(&cfg.OAuth)
+			if err := oauthProvider.Discover(
+				context.Background(),
+			); err != nil {
+				slog.Error("oauth discovery failed",
+					"error", err)
+				oauthProvider = nil
+			} else {
+				go oauthProvider.StartStateCleaner(
+					context.Background())
+			}
+		}
+		registerAuthRoutes(apiMux, pool, oauthProvider, cfg)
 		registerUserRoutes(apiMux, pool)
 		registerConfigRoutes(apiMux, pool, cfg)
 		registerNotificationRoutes(apiMux, pool)
@@ -147,10 +164,16 @@ func registerAPIRoutes(
 		emergencyStopHandler(mgr))
 	mux.HandleFunc(
 		"POST /api/v1/resume", resumeHandler(mgr))
+	mux.HandleFunc(
+		"GET /api/v1/llm/models",
+		listModelsHandler(&cfg.LLM))
 }
 
 func registerAuthRoutes(
-	mux *http.ServeMux, pool *pgxpool.Pool,
+	mux *http.ServeMux,
+	pool *pgxpool.Pool,
+	oauthProvider *auth.OAuthProvider,
+	cfg *config.Config,
 ) {
 	mux.HandleFunc(
 		"POST /api/v1/auth/login", loginHandler(pool))
@@ -158,6 +181,19 @@ func registerAuthRoutes(
 		"POST /api/v1/auth/logout", logoutHandler(pool))
 	mux.HandleFunc(
 		"GET /api/v1/auth/me", meHandler())
+
+	// OAuth routes (always registered; return disabled if not configured).
+	mux.HandleFunc(
+		"GET /api/v1/auth/oauth/config",
+		oauthConfigHandler(oauthProvider, cfg.OAuth.Provider))
+	mux.HandleFunc(
+		"GET /api/v1/auth/oauth/authorize",
+		oauthAuthorizeHandler(oauthProvider))
+	mux.HandleFunc(
+		"GET /api/v1/auth/oauth/callback",
+		oauthCallbackHandler(
+			oauthProvider, pool,
+			cfg.OAuth.DefaultRole, cfg.OAuth.Provider))
 }
 
 func registerUserRoutes(

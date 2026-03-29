@@ -100,7 +100,7 @@ export function AlertLogPage({ database }) {
   const alerts = data?.alerts || []
 
   if (alerts.length === 0) {
-    return <EmptyState message="No alerts recorded" />
+    return <EmptyState message="No alerts sent yet. Configure notification channels in Settings to receive alerts when pg_sage detects issues." />
   }
 
   const columns = [

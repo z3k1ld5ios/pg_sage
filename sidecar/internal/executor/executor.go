@@ -475,15 +475,15 @@ func extractIndexName(sql string) string {
 	if idx < 0 {
 		return ""
 	}
-	rest := sql[idx+5:]
+	rest := strings.TrimSpace(sql[idx+5:])
 	// Skip optional "CONCURRENTLY" and "IF NOT EXISTS".
-	upper = strings.ToUpper(strings.TrimSpace(rest))
+	upper = strings.ToUpper(rest)
 	if strings.HasPrefix(upper, "CONCURRENTLY") {
-		rest = strings.TrimSpace(rest[12:])
+		rest = strings.TrimSpace(rest[len("CONCURRENTLY"):])
 		upper = strings.ToUpper(rest)
 	}
 	if strings.HasPrefix(upper, "IF NOT EXISTS") {
-		rest = strings.TrimSpace(rest[13:])
+		rest = strings.TrimSpace(rest[len("IF NOT EXISTS"):])
 	}
 	// Next token is the index name.
 	fields := strings.Fields(rest)

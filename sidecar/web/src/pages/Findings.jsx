@@ -7,6 +7,43 @@ import { LoadingSpinner } from '../components/LoadingSpinner'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { EmptyState } from '../components/EmptyState'
 
+const emptyMessages = {
+  open: 'No open recommendations. Your databases look good!',
+  suppressed: 'No suppressed recommendations.',
+  resolved:
+    'No resolved recommendations yet.'
+    + ' Recommendations move here after you act on them.',
+}
+
+function formatDetailKey(key) {
+  return key.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase())
+}
+
+function formatDetailValue(value) {
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+  if (typeof value === 'number' && !Number.isInteger(value)) {
+    return Math.round(value * 100) / 100
+  }
+  if (value === null || value === undefined) return '-'
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
+const riskStyles = {
+  safe: {
+    background: 'var(--green)',
+    label: 'Low Risk',
+  },
+  moderate: {
+    background: 'var(--yellow, #eab308)',
+    label: 'Moderate Risk',
+  },
+  high: {
+    background: 'var(--red)',
+    label: 'High Risk \u2014 Review Carefully',
+  },
+}
+
 export function Findings({ database, user }) {
   const [status, setStatus] = useState('open')
   const [severity, setSeverity] = useState('')
@@ -47,11 +84,12 @@ export function Findings({ database, user }) {
               color: status === s ? '#fff' : 'var(--text-secondary)',
               border: '1px solid var(--border)',
             }}>
-            {s}
+            {s.charAt(0).toUpperCase() + s.slice(1)}
           </button>
         ))}
         <select value={severity}
           onChange={e => setSeverity(e.target.value)}
+          data-testid="severity-filter"
           className="px-3 py-1.5 rounded text-sm ml-auto"
           style={{
             background: 'var(--bg-card)',
@@ -66,9 +104,10 @@ export function Findings({ database, user }) {
       </div>
 
       {findings.length === 0 ? (
-        <EmptyState message={`No ${status} findings`} />
+        <EmptyState message={emptyMessages[status]} />
       ) : (
-        <DataTable columns={columns} rows={findings} expandable
+        <DataTable data-testid="findings-table"
+          columns={columns} rows={findings} expandable
           renderExpanded={row => (
             <FindingDetail row={row} canAct={canAct}
               onActionDone={refetch} />
@@ -77,8 +116,9 @@ export function Findings({ database, user }) {
       )}
 
       <div className="text-xs"
+        data-testid="findings-count"
         style={{ color: 'var(--text-secondary)' }}>
-        {data?.total || 0} total findings
+        {data?.total || 0} total recommendations
       </div>
     </div>
   )
@@ -88,6 +128,7 @@ function FindingDetail({ row, canAct, onActionDone }) {
   const [showModal, setShowModal] = useState(false)
   const [executing, setExecuting] = useState(false)
   const [result, setResult] = useState(null)
+  const [showRawJson, setShowRawJson] = useState(false)
 
   async function handleExecute() {
     setExecuting(true)
@@ -123,6 +164,8 @@ function FindingDetail({ row, canAct, onActionDone }) {
     }
   }
 
+  const risk = row.action_risk && riskStyles[row.action_risk]
+
   return (
     <div className="space-y-3">
       <p className="text-sm"
@@ -144,13 +187,45 @@ function FindingDetail({ row, canAct, onActionDone }) {
             style={{ color: 'var(--text-secondary)' }}>
             Detail
           </div>
-          <pre className="text-xs p-2 rounded overflow-auto"
+          <div data-testid="detail-grid"
+            className="grid gap-x-4 gap-y-1 text-xs p-2 rounded"
             style={{
+              gridTemplateColumns: 'max-content 1fr',
               background: 'var(--bg-primary)',
-              color: 'var(--text-secondary)',
             }}>
-            {JSON.stringify(row.detail, null, 2)}
-          </pre>
+            {Object.entries(row.detail).map(([k, v]) => (
+              <div key={k} className="contents">
+                <span className="font-medium"
+                  style={{ color: 'var(--text-secondary)' }}>
+                  {formatDetailKey(k)}
+                </span>
+                <span style={{ color: 'var(--text-primary)' }}>
+                  {formatDetailValue(v)}
+                </span>
+              </div>
+            ))}
+          </div>
+          <button
+            data-testid="show-raw-json"
+            onClick={() => setShowRawJson(prev => !prev)}
+            className="text-xs mt-1 px-2 py-0.5 rounded"
+            style={{
+              background: 'transparent',
+              color: 'var(--text-secondary)',
+              border: '1px solid var(--border)',
+              cursor: 'pointer',
+            }}>
+            {showRawJson ? 'Hide raw JSON' : 'Show raw JSON'}
+          </button>
+          {showRawJson && (
+            <pre className="text-xs p-2 mt-1 rounded overflow-auto"
+              style={{
+                background: 'var(--bg-primary)',
+                color: 'var(--text-secondary)',
+              }}>
+              {JSON.stringify(row.detail, null, 2)}
+            </pre>
+          )}
         </div>
       )}
 
@@ -169,6 +244,16 @@ function FindingDetail({ row, canAct, onActionDone }) {
       {canAct && row.recommended_sql && row.status === 'open'
         && !row.acted_on_at && (
         <div>
+          {risk && (
+            <span className="inline-block text-xs font-medium
+              px-2 py-0.5 rounded mr-2 mb-2"
+              style={{
+                background: risk.background,
+                color: '#fff',
+              }}>
+              {risk.label}
+            </span>
+          )}
           {showModal ? (
             <div className="p-3 rounded space-y-2"
               style={{

@@ -3,6 +3,7 @@ export function DeleteConfirm({ db, onConfirm, onCancel }) {
     <div className="fixed inset-0 flex items-center justify-center z-50"
       style={{ background: 'rgba(0,0,0,0.5)' }}>
       <div className="rounded-lg p-6 max-w-md w-full"
+        data-testid="delete-confirm"
         style={{
           background: 'var(--bg-card)',
           border: '1px solid var(--border)',
@@ -20,11 +21,13 @@ export function DeleteConfirm({ db, onConfirm, onCancel }) {
         </p>
         <div className="flex gap-2 justify-end">
           <button onClick={onCancel}
+            data-testid="delete-confirm-cancel"
             className="px-4 py-1.5 rounded text-sm"
             style={{ color: 'var(--text-secondary)' }}>
             Cancel
           </button>
           <button onClick={onConfirm}
+            data-testid="delete-confirm-yes"
             className="px-4 py-1.5 rounded text-sm font-medium"
             style={{ background: '#ef4444', color: '#fff' }}>
             Delete

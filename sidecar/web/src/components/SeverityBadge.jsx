@@ -1,7 +1,7 @@
 const COLORS = {
-  critical: { bg: '#3b1111', text: '#ef4444', label: 'CRIT' },
-  warning: { bg: '#3b2e11', text: '#fbbf24', label: 'WARN' },
-  info: { bg: '#0f2640', text: '#4a9eff', label: 'INFO' },
+  critical: { bg: '#3b1111', text: '#ef4444', label: 'Critical' },
+  warning: { bg: '#3b2e11', text: '#fbbf24', label: 'Warning' },
+  info: { bg: '#0f2640', text: '#4a9eff', label: 'Info' },
 }
 
 export function SeverityBadge({ severity }) {

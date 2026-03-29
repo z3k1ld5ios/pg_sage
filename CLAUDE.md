@@ -153,11 +153,129 @@ All under `/api/v1/`, all accept `?database=` filter in fleet mode:
 
 ## Testing Strategy
 
-762+ tests using stdlib `testing` package. Three levels:
+1100+ tests using stdlib `testing` package. Three levels:
 
 1. **Unit tests** (`*_test.go`) — rules, config parsing, fleet manager, API handlers, optimizer, advisor
 2. **Integration tests** (`//go:build integration`) — real HTTP via httptest, fleet scenarios
 3. **Schema tests** — require local PostgreSQL on port 5432 (bootstrap, idempotency)
+
+## Testing Standards
+
+### Core Principle
+Tests exist to **find bugs**, not to prove code works. A test suite that always passes is suspicious. If you write tests and they all pass on the first run, you probably wrote weak tests.
+
+### Rules — Violations Are Blockers
+
+1. **No silent skips.** After every `go test` run, grep output for `SKIP`, `TODO`, and `PENDING`. Report skipped tests explicitly with reasons. A skipped test is NOT a passing test. Do not report "all tests pass" if any test was skipped.
+
+2. **No cached results.** Always run tests with `-count=1` to defeat Go's test cache. A cached pass is not a real pass.
+
+3. **Coverage is mandatory.** Run `go test -cover -count=1 ./...` and report per-package coverage. If any package with business logic falls below 70%, write additional tests before reporting completion. Utility/helper packages have a 50% floor.
+
+4. **Assertions must be specific.** `assert.NoError(err)` alone is never sufficient. Every test must also assert the actual return value, state change, or side effect. If a test would still pass with the function body replaced by `return nil, nil`, the test is broken.
+
+5. **Never modify a test to make it pass.** If a test fails, fix the implementation. The only reason to modify a test is if the test itself contains a logical error — and if you do, explain exactly what was wrong with the test before changing it.
+
+### Test Writing Process (Two Phases — Do Not Combine)
+
+**Phase 1: Write tests.** Write all tests based on the spec or feature description. Include every category below. Do NOT run them yet. Commit or stage them.
+
+**Phase 2: Run and fix.** Run the full suite. Fix implementation bugs that tests reveal. Track what failed and why. Report a summary of bugs found.
+
+If you write tests and run them in the same step, you will unconsciously write tests that pass. Separating the phases eliminates this bias.
+
+### Required Test Categories
+
+For every feature, function, or component, tests must cover:
+
+| Category | What to test | Example |
+|---|---|---|
+| **Happy path** | Expected input → expected output | Valid query → correct index recommendation |
+| **Invalid input** | Malformed, wrong-type, or out-of-range input | Empty string query, negative threshold, SQL injection strings |
+| **Nil/empty/zero** | nil pointers, empty slices, zero-value structs, empty maps | `nil` config, `[]QueryStat{}`, zero `ConfidenceScore` |
+| **Error propagation** | Caller receives a meaningful, distinguishable error | DB connection refused → error contains "connection" not just "failed" |
+| **Boundary conditions** | Thresholds, limits, cutoffs, window edges | `unused_index_window_days=0` vs `=1` vs `=7`, trust level boundaries |
+| **Concurrent access** | Race conditions under parallel execution | Two advisors writing recommendations simultaneously |
+| **State transitions** | Trust ramp levels, executor gating, mode changes | `monitor` → `advisory` → `auto`, fleet mode vs single mode |
+| **Integration** | Real or dockerized Postgres, actual SQL execution | Index created via `CREATE INDEX CONCURRENTLY`, vacuum actually runs |
+
+If a category genuinely doesn't apply to a component, write a comment explaining why: `// No concurrent access tests: this function is stateless and takes no shared references`
+
+### Negative Testing Is Not Optional
+
+For every happy-path test, ask: "What should happen when this goes wrong?" Then write that test. Specifically:
+
+- **LLM responses:** Malformed JSON, markdown-wrapped JSON, empty response, timeout, rate limit error
+- **PostgreSQL errors:** Connection lost mid-query, permission denied, table doesn't exist, extension not installed
+- **Config values:** Missing keys, zero values where defaults are expected, conflicting settings
+- **Executor actions:** DDL that fails mid-execution, `CONCURRENTLY` that can't acquire lock, vacuum on a table in a transaction
+
+### Post-Test Audit (Run After Every Test Session)
+
+After all tests pass, answer these questions for each test file:
+
+1. **What input would break this that I haven't tested?**
+2. **What behavior is NOT covered by any assertion?**
+3. **Are there assertions that would pass even if the feature was completely broken?** (e.g., only checking `err == nil` without checking the result)
+4. **Are there any test doubles (mocks/stubs) that hide real failure modes?** (e.g., mocking the DB so you never test actual SQL)
+
+Fix every gap found. Report what was added.
+
+### Verification Checklist Pattern
+
+For integration and end-to-end testing, use the numbered checklist format:
+
+```
+CHECK-01: [PASS/FAIL] Fleet mode discovers all 3 databases
+CHECK-02: [PASS/FAIL] REST API /api/databases returns correct count
+CHECK-03: [PASS/FAIL] Executor respects trust_level=monitor (no actions taken)
+...
+```
+
+- Every check must be programmatically verifiable where possible
+- Checks that require manual verification must be tagged: `// MANUAL: requires browser inspection of dashboard`
+- A checklist with any FAIL is a failing test run, even if individual unit tests pass
+- Do not report success until every CHECK is PASS or explicitly acknowledged as MANUAL
+
+### Known Failure Patterns to Watch For
+
+These are bugs Claude Code has introduced in the past. Test for them proactively:
+
+- **Default value masking:** Config values defaulting to zero instead of their intended default (e.g., `unused_index_window_days` defaulting to 0 instead of 7). Write tests that verify defaults without any config file present.
+- **Markdown-wrapped LLM responses:** Gemini wrapping JSON in ```json fences. Test that `stripToJSON` handles this everywhere LLM output is parsed.
+- **Transaction scope errors:** Operations like VACUUM that cannot run inside a transaction. Test that these use dedicated connections.
+- **Fleet mode leaks:** Values like `database_name` returning "all" instead of the actual database name. Test per-database context isolation.
+- **Confidence score boundaries:** Verify the optimizer reaches advisory threshold (0.5) without HypoPG. Test with and without HypoPG available.
+
+### Reporting Format
+
+After any test run, report in this exact format:
+
+```
+## Test Results
+
+**Command:** `go test -cover -count=1 ./...`
+**Total:** X passed, Y failed, Z skipped
+**Coverage:** [per-package breakdown]
+
+### Skipped Tests (must be zero or justified)
+- pkg/analyzer: TestComplexJoinDetection — SKIPPED: requires pg_stat_statements (CI limitation)
+
+### Failures (if any)
+- pkg/executor: TestVacuumDedicatedConn — FAIL: vacuum attempted inside transaction
+
+### Coverage Gaps (packages below threshold)
+- pkg/fleet: 58% — missing tests for DatabaseManager connection pooling
+
+### Bugs Found This Session
+1. [BUG] executor.go:142 — VACUUM not using dedicated connection
+2. [BUG] config.go:87 — unused_index_window_days defaults to 0, not 7
+
+### Manual Checks Remaining
+- CHECK-12: MANUAL — Dashboard dark mode toggle (requires browser)
+```
+
+No test session is complete without this report. "All tests pass" is never an acceptable summary.
 
 ## Code Style & Conventions
 

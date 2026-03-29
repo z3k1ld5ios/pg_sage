@@ -161,6 +161,17 @@ retention:
 prometheus:
   listen_addr: "0.0.0.0:9187"
 
+# OAuth/OIDC SSO (optional)
+# Allows team login via Google Workspace, GitHub, Azure AD, or any OIDC provider.
+oauth:
+  enabled: false
+  provider: "google"            # google, github, or oidc (generic OIDC)
+  client_id: ""
+  client_secret: ""
+  redirect_url: "http://localhost:8080/api/v1/auth/oauth/callback"
+  issuer_url: ""                # Required for provider: oidc (e.g. https://login.microsoftonline.com/{tenant}/v2.0)
+  default_role: "viewer"        # Role assigned to new OAuth users: admin, operator, viewer
+
 api:
   listen_addr: "0.0.0.0:8080"  # REST API + React dashboard
 

@@ -60,11 +60,13 @@ export function DatabasesPage() {
 
       <div className="flex gap-3 mb-4">
         <button onClick={() => { setEditingDB(null); setShowForm(true) }}
+          data-testid="add-database-button"
           className="px-4 py-1.5 rounded text-sm font-medium"
           style={{ background: 'var(--accent)', color: '#fff' }}>
           Add Database
         </button>
         <button onClick={() => setShowImport(true)}
+          data-testid="import-csv-button"
           className="px-4 py-1.5 rounded text-sm font-medium"
           style={{
             background: 'var(--bg-card)',

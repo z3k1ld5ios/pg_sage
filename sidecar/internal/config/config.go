@@ -29,6 +29,7 @@ type Config struct {
 	Tuner       TunerConfig      `yaml:"tuner"`
 	Retention   RetentionConfig  `yaml:"retention"`
 	Prometheus PrometheusConfig `yaml:"prometheus"`
+	OAuth      OAuthConfig      `yaml:"oauth"`
 
 	// Fleet mode fields.
 	Databases []DatabaseConfig `yaml:"databases"`
@@ -239,6 +240,17 @@ type RetentionConfig struct {
 
 type PrometheusConfig struct {
 	ListenAddr string `yaml:"listen_addr"`
+}
+
+// OAuthConfig holds OAuth2/OIDC SSO settings.
+type OAuthConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	Provider     string `yaml:"provider"`
+	ClientID     string `yaml:"client_id"`
+	ClientSecret string `yaml:"client_secret"`
+	RedirectURL  string `yaml:"redirect_url"`
+	IssuerURL    string `yaml:"issuer_url"`
+	DefaultRole  string `yaml:"default_role"`
 }
 
 // Interval helpers.
@@ -615,6 +627,9 @@ func newDefaults() *Config {
 		API: APIConfig{
 			ListenAddr: DefaultAPIListenAddr,
 		},
+		OAuth: OAuthConfig{
+			DefaultRole: "viewer",
+		},
 	}
 }
 
@@ -716,6 +731,21 @@ func overlayEnv(cfg *Config) {
 	}
 	if v := os.Getenv("SAGE_OPTIMIZER_LLM_MODEL"); v != "" {
 		cfg.LLM.OptimizerLLM.Model = v
+	}
+	if v := os.Getenv("SAGE_OAUTH_CLIENT_ID"); v != "" {
+		cfg.OAuth.ClientID = v
+	}
+	if v := os.Getenv("SAGE_OAUTH_CLIENT_SECRET"); v != "" {
+		cfg.OAuth.ClientSecret = v
+	}
+	if v := os.Getenv("SAGE_OAUTH_ISSUER_URL"); v != "" {
+		cfg.OAuth.IssuerURL = v
+	}
+	if v := os.Getenv("SAGE_OAUTH_REDIRECT_URL"); v != "" {
+		cfg.OAuth.RedirectURL = v
+	}
+	if v := os.Getenv("SAGE_OAUTH_PROVIDER"); v != "" {
+		cfg.OAuth.Provider = v
 	}
 }
 
