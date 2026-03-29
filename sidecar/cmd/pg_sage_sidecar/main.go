@@ -66,6 +66,7 @@ var (
 	shutdownFlag       bool
 	fleetMgr           *fleet.DatabaseManager
 	apiServer          *http.Server
+	globalMetaState    *metaDBState
 )
 
 var (
@@ -108,6 +109,7 @@ func main() {
 			os.Exit(1)
 		}
 		metaState = state
+		globalMetaState = state
 		pool = metaPool
 		logInfo("startup", "meta database initialized")
 	}
@@ -601,6 +603,9 @@ func initFleetAndAPI() {
 
 	// Start session cleaner goroutine (cleans expired sessions hourly).
 	sessionPool := fleetMgr.PoolForDatabase("all")
+	if sessionPool == nil {
+		sessionPool = pool
+	}
 	if sessionPool != nil {
 		go auth.StartSessionCleaner(
 			shutdownCtx, sessionPool, time.Hour,
@@ -866,8 +871,12 @@ func startAPIServer(rl *RateLimiter) {
 
 	// Session auth + rate limiting applied to /api/v1/* only.
 	// Static dashboard assets are served without auth.
-	// The pool used here is the first database instance pool.
+	// Use fleet pool if available; fall back to global pool
+	// (meta-db pool) so auth routes work even with 0 instances.
 	authPool := fleetMgr.PoolForDatabase("all")
+	if authPool == nil {
+		authPool = pool
+	}
 	var actionDeps *api.ActionDeps
 	if actionStore != nil && exec != nil {
 		actionDeps = &api.ActionDeps{
@@ -875,8 +884,15 @@ func startAPIServer(rl *RateLimiter) {
 			Executor: exec,
 		}
 	}
-	router := api.NewRouterWithActions(
-		fleetMgr, cfg, authPool, actionDeps,
+	var dbDeps *api.DatabaseDeps
+	if globalMetaState != nil && globalMetaState.Store != nil {
+		dbDeps = &api.DatabaseDeps{
+			Store: globalMetaState.Store,
+			Fleet: fleetMgr,
+		}
+	}
+	router := api.NewRouterFull(
+		fleetMgr, cfg, authPool, actionDeps, dbDeps,
 		api.SessionAuthMiddleware(authPool),
 		func(next http.Handler) http.Handler {
 			return rateLimitMiddleware(rl, next)

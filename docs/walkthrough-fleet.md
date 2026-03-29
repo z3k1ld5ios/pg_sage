@@ -1,8 +1,9 @@
 # pg_sage Fleet Walkthrough: Two Databases, Full Feature Tour
 
 Monitor two PostgreSQL databases from a single pg_sage sidecar. This guide walks
-through every feature: fleet dashboard, findings, actions, LLM advisor, notifications,
-user roles, settings, emergency stop, and Prometheus metrics.
+through every feature: fleet dashboard, database management, findings, actions,
+LLM advisor, notifications, user roles, settings, emergency stop, and Prometheus
+metrics.
 
 **Time**: ~20 minutes
 **Platform**: Windows (Git Bash) or Linux/macOS
@@ -160,21 +161,13 @@ SQL
 ## Step 3: Configure and Start the Sidecar
 
 Create `e2e_config.yaml` in the `pg_sage/` root. This is the **bootstrap
-config** — just the first database connection and listen addresses.
-The second database, LLM, and all other settings are configured through
-the web UI.
+config** — just the metadata database connection and listen addresses.
+Databases, LLM, and all other settings are managed through the web UI.
 
 ```yaml
 mode: fleet
 
-databases:
-  - name: production
-    host: localhost
-    port: 5433
-    user: postgres
-    password: postgres
-    database: app_production
-    sslmode: disable
+meta_db: "postgres://postgres:postgres@localhost:5433/app_production?sslmode=disable"
 
 api:
   listen_addr: "0.0.0.0:8080"
@@ -182,6 +175,10 @@ api:
 prometheus:
   listen_addr: "0.0.0.0:9187"
 ```
+
+The `meta_db` connection is where pg_sage stores its own data (users,
+sessions, config overrides, managed databases). You will add the databases
+to monitor through the UI in the next steps.
 
 ### Build and start
 
@@ -200,10 +197,11 @@ go build -o pg_sage_sidecar ./cmd/pg_sage_sidecar/
 
 Watch the logs. You should see:
 ```
+[INFO] [startup] pg_sage sidecar vdev — mode=fleet
+[INFO] [startup] meta database initialized
 [INFO] [startup] first admin created — email: admin@pg-sage.local  password: <random>
-[INFO] [fleet] db "production": connected
-[INFO] [fleet] collector cycle database=production
-[INFO] [fleet] analyzer: 5 findings database=production
+[INFO] [api] listening on 0.0.0.0:8080
+[INFO] [prometheus] listening on 0.0.0.0:9187
 ```
 
 **Copy the generated admin password from the log output** — you need it
@@ -220,18 +218,35 @@ Open **http://localhost:8080** in your browser.
   - **Email:** `admin@pg-sage.local`
   - **Password:** (the random password from the log)
 - [ ] Click **Sign In**
-- [ ] Dashboard loads showing 1 database (production)
+- [ ] Dashboard loads (empty — no databases monitored yet)
 
 ---
 
-## Step 5: Add the Staging Database (via UI)
+## Step 5: Add Databases (via UI)
 
 Navigate to **Databases** in the sidebar.
 
+### Add production
+
 1. [ ] Click **Add Database**
 2. [ ] Fill in the form:
+   - Name: `production`
+   - Host: `localhost`
+   - Port: `5433`
+   - Database Name: `app_production`
+   - Username: `postgres`
+   - Password: `postgres`
+   - SSL Mode: `disable`
+3. [ ] Click **Test Connection** — should show success
+4. [ ] Click **Add**
+5. [ ] The production database appears in the list
+
+### Add staging
+
+1. [ ] Click **Add Database** again
+2. [ ] Fill in:
    - Name: `staging`
-   - Host: `localhost` (or the Docker host IP)
+   - Host: `localhost`
    - Port: `5434`
    - Database Name: `app_staging`
    - Username: `postgres`
@@ -239,9 +254,14 @@ Navigate to **Databases** in the sidebar.
    - SSL Mode: `disable`
 3. [ ] Click **Test Connection** — should show success
 4. [ ] Click **Add**
-5. [ ] The staging database appears in the list
-6. [ ] Dashboard now shows **2 Databases Monitored**
-7. [ ] Within 30 seconds, findings start appearing for staging
+5. [ ] Both databases now appear in the list
+
+### Verify on the Dashboard
+
+- [ ] Navigate back to **Dashboard**
+- [ ] Shows **2 Databases Monitored**
+- [ ] Within 30-60 seconds, findings start appearing as the collector
+      and analyzer run their first cycles
 
 ---
 
@@ -338,7 +358,8 @@ The Settings page opens in **Simple** mode with three tabs:
 In Settings, go to the **AI & Alerts** tab (Simple) or **LLM** tab (Advanced).
 
 1. [ ] Toggle **LLM Enabled** to on
-2. [ ] Set **Endpoint** to: `https://generativelanguage.googleapis.com/v1beta/openai`
+2. [ ] Set **Endpoint** to:
+       `https://generativelanguage.googleapis.com/v1beta/openai`
 3. [ ] Set **API Key** to your Gemini key
 4. [ ] Click **Discover Models** -- a dropdown populates with available models
 5. [ ] Select **gemini-2.0-flash** (or another model)
@@ -383,8 +404,10 @@ Navigate to **Notifications** in the sidebar (admin only).
 
 In the **Rules** tab:
 
-1. [ ] Create rule: Channel=team-alerts, Event=finding_critical, Severity=critical
-2. [ ] Create rule: Channel=oncall-pd, Event=finding_critical, Severity=critical
+1. [ ] Create rule: Channel=team-alerts, Event=finding_critical,
+       Min Severity=critical
+2. [ ] Create rule: Channel=oncall-pd, Event=finding_critical,
+       Min Severity=critical
 3. [ ] Rules appear in the list with enabled toggles
 
 ### View notification log
@@ -467,6 +490,13 @@ curl -c cookies -X POST http://localhost:8080/api/v1/auth/login \
 # Fleet overview
 curl -b cookies http://localhost:8080/api/v1/databases
 
+# Add a database
+curl -b cookies -X POST http://localhost:8080/api/v1/databases/managed \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"mydb","host":"db.example.com","port":5432,
+       "database_name":"mydb","username":"sage","password":"***",
+       "sslmode":"require"}'
+
 # Findings (all / filtered)
 curl -b cookies "http://localhost:8080/api/v1/findings?limit=20"
 curl -b cookies "http://localhost:8080/api/v1/findings?database=staging"
@@ -478,16 +508,11 @@ curl -b cookies -X POST http://localhost:8080/api/v1/findings/1/unsuppress
 # Actions
 curl -b cookies http://localhost:8080/api/v1/actions
 
-# Config (get / hot-reload update)
+# Config (get / update)
 curl -b cookies http://localhost:8080/api/v1/config
 curl -b cookies -X PUT http://localhost:8080/api/v1/config/global \
   -H 'Content-Type: application/json' \
   -d '{"analyzer.slow_query_threshold_ms":1000}'
-
-# Add a database at runtime
-curl -b cookies -X POST http://localhost:8080/api/v1/databases/managed \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"staging","host":"localhost","port":5434,"database_name":"app_staging","username":"postgres","password":"postgres","sslmode":"disable"}'
 
 # LLM models
 curl -b cookies http://localhost:8080/api/v1/llm/models
@@ -528,8 +553,11 @@ docker compose down -v
 +--------------------------------------------+
 |           pg_sage sidecar (Go)             |
 |                                            |
+|  meta_db ------> sage.* tables            |
+|  (users, config, managed databases)       |
+|                                            |
 |  Collector ---> Snapshots ---> Analyzer    |
-|     (15s)                        (30s)     |
+|     (60s)                        (600s)    |
 |                                    |       |
 |  Advisor (LLM) <-- Gemini Flash    |       |
 |  Forecaster                        v       |
