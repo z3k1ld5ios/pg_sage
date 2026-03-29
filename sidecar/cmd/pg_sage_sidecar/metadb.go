@@ -77,6 +77,11 @@ func initMetaDB(
 		return nil, fmt.Errorf("bootstrapping meta-db schema: %w", err)
 	}
 
+	// Run config schema migration (adds database_id, audit table).
+	if err := schema.MigrateConfigSchema(ctx, metaPool); err != nil {
+		return nil, fmt.Errorf("config schema migration: %w", err)
+	}
+
 	// Derive encryption key if provided.
 	var encKey []byte
 	if encKeyPassphrase != "" {

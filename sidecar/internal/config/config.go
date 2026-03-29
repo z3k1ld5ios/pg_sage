@@ -461,7 +461,7 @@ func (c *Config) validate() error {
 
 	// Fleet-specific validation.
 	if c.Mode == "fleet" {
-		if len(c.Databases) == 0 {
+		if len(c.Databases) == 0 && !c.HasMetaDB() {
 			return fmt.Errorf("fleet mode requires at least one database")
 		}
 		seen := make(map[string]bool, len(c.Databases))
