@@ -34,13 +34,24 @@ export function DatabaseForm({ db, onClose, onError }) {
   }
 
   async function handleTest() {
-    if (!db?.id) return
     setTesting(true)
     setTestResult(null)
     try {
-      const res = await fetch(
-        `/api/v1/databases/managed/${db.id}/test`,
-        { method: 'POST', credentials: 'include' })
+      let res
+      if (db?.id) {
+        res = await fetch(
+          `/api/v1/databases/managed/${db.id}/test`,
+          { method: 'POST', credentials: 'include' })
+      } else {
+        res = await fetch(
+          '/api/v1/databases/managed/test-connection',
+          {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(form),
+          })
+      }
       const data = await res.json()
       setTestResult(data)
     } catch (err) {
@@ -137,18 +148,17 @@ export function DatabaseForm({ db, onClose, onError }) {
             style={{ background: 'var(--accent)', color: '#fff' }}>
             {saving ? 'Saving...' : 'Save'}
           </button>
-          {isEdit && (
-            <button type="button" onClick={handleTest}
-              disabled={testing}
-              className="px-4 py-1.5 rounded text-sm font-medium"
-              style={{
-                background: 'var(--bg-main)',
-                color: 'var(--text-primary)',
-                border: '1px solid var(--border)',
-              }}>
-              {testing ? 'Testing...' : 'Test Connection'}
-            </button>
-          )}
+          <button type="button" onClick={handleTest}
+            disabled={testing}
+            data-testid="db-test-connection"
+            className="px-4 py-1.5 rounded text-sm font-medium"
+            style={{
+              background: 'var(--bg-main)',
+              color: 'var(--text-primary)',
+              border: '1px solid var(--border)',
+            }}>
+            {testing ? 'Testing...' : 'Test Connection'}
+          </button>
           <button type="button" onClick={onClose}
             data-testid="db-cancel-button"
             className="px-4 py-1.5 rounded text-sm"

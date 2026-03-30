@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/pg-sage/sidecar/internal/executor"
+	"github.com/pg-sage/sidecar/internal/fleet"
 	"github.com/pg-sage/sidecar/internal/store"
 )
 
@@ -50,6 +51,52 @@ func pendingCountHandler(
 			return
 		}
 		jsonResponse(w, map[string]any{"count": count})
+	}
+}
+
+// fleetPendingActionsHandler dynamically resolves pools from
+// the fleet manager on each request, surviving database
+// delete/re-add cycles.
+func fleetPendingActionsHandler(
+	mgr *fleet.DatabaseManager,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		allResult := make([]map[string]any, 0)
+		for _, pool := range mgr.AllPools() {
+			as := store.NewActionStore(pool)
+			actions, err := as.ListPending(
+				r.Context(), nil)
+			if err != nil {
+				continue
+			}
+			for _, a := range actions {
+				allResult = append(
+					allResult, queuedActionMap(a))
+			}
+		}
+		jsonResponse(w, map[string]any{
+			"pending": allResult,
+			"total":   len(allResult),
+		})
+	}
+}
+
+// fleetPendingCountHandler returns the aggregate count of
+// pending actions across all fleet databases.
+func fleetPendingCountHandler(
+	mgr *fleet.DatabaseManager,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		total := 0
+		for _, pool := range mgr.AllPools() {
+			as := store.NewActionStore(pool)
+			count, err := as.PendingCount(r.Context())
+			if err != nil {
+				continue
+			}
+			total += count
+		}
+		jsonResponse(w, map[string]any{"count": total})
 	}
 }
 

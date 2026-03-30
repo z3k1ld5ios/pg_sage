@@ -36,7 +36,7 @@ export function RulesTab() {
       const chs = data.channels || []
       setChannels(chs)
       if (chs.length > 0 && !channelId) {
-        setChannelId(String(chs[0].ID))
+        setChannelId(String(chs[0].id))
       }
     } catch (_) { /* ignore */ }
   }, [channelId])
@@ -77,12 +77,12 @@ export function RulesTab() {
   async function handleToggle(rule) {
     try {
       const res = await fetch(
-        `/api/v1/notifications/rules/${rule.ID}`, {
+        `/api/v1/notifications/rules/${rule.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
           body: JSON.stringify({
-            enabled: !rule.Enabled }),
+            enabled: !rule.enabled }),
         })
       if (!res.ok) throw new Error('Update failed')
       fetchRules()
@@ -104,8 +104,8 @@ export function RulesTab() {
   }
 
   const channelName = (id) => {
-    const ch = channels.find(c => c.ID === id)
-    return ch ? ch.Name : `#${id}`
+    const ch = channels.find(c => c.id === id)
+    return ch ? ch.name : `#${id}`
   }
 
   return (
@@ -126,8 +126,8 @@ export function RulesTab() {
               className="px-3 py-1.5 rounded text-sm"
               style={inputStyle}>
               {channels.map(ch => (
-                <option key={ch.ID} value={ch.ID}>
-                  {ch.Name}
+                <option key={ch.id} value={ch.id}>
+                  {ch.name}
                 </option>
               ))}
             </select>
@@ -204,33 +204,33 @@ function RuleTable({
         </thead>
         <tbody>
           {rules.map(r => (
-            <tr key={r.ID} style={{
+            <tr key={r.id} style={{
               borderBottom: '1px solid var(--border)',
             }}>
               <td className="px-4 py-2"
                 style={{ color: 'var(--text-primary)' }}>
-                {channelName(r.ChannelID)}
+                {channelName(r.channel_id)}
               </td>
               <td className="px-4 py-2"
                 style={{ color: 'var(--text-secondary)' }}>
-                {r.Event}
+                {r.event}
               </td>
               <td className="px-4 py-2"
                 style={{ color: 'var(--text-secondary)' }}>
-                {r.MinSeverity}
+                {r.min_severity}
               </td>
               <td className="px-4 py-2">
                 <button onClick={() => onToggle(r)}
                   className="text-xs px-2 py-1 rounded"
                   style={{
-                    color: r.Enabled
+                    color: r.enabled
                       ? '#22c55e' : '#ef4444',
                   }}>
-                  {r.Enabled ? 'ON' : 'OFF'}
+                  {r.enabled ? 'ON' : 'OFF'}
                 </button>
               </td>
               <td className="px-4 py-2 text-right">
-                <button onClick={() => onDelete(r.ID)}
+                <button onClick={() => onDelete(r.id)}
                   className="px-2 py-1 rounded text-xs"
                   style={{ color: '#ef4444' }}>
                   Delete

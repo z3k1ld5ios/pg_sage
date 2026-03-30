@@ -34,7 +34,9 @@ type metaDBState struct {
 	Store      *store.DatabaseStore
 }
 
-// connectMetaDB creates a connection pool for the metadata database.
+// connectMetaDB creates a connection pool for the metadata database
+// with exponential backoff. Retries up to 5 times with delays of
+// 1s, 2s, 4s, 8s, 16s before giving up.
 func connectMetaDB(dsn string) (*pgxpool.Pool, error) {
 	poolCfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
@@ -45,21 +47,42 @@ func connectMetaDB(dsn string) (*pgxpool.Pool, error) {
 	poolCfg.MaxConnLifetime = 30 * time.Minute
 	poolCfg.MaxConnIdleTime = 5 * time.Minute
 
-	p, err := pgxpool.NewWithConfig(context.Background(), poolCfg)
-	if err != nil {
-		return nil, fmt.Errorf("creating meta-db pool: %w", err)
-	}
+	const maxAttempts = 5
+	backoff := 1 * time.Second
+	var lastErr error
 
-	ctx, cancel := context.WithTimeout(
-		context.Background(), 5*time.Second,
-	)
-	defer cancel()
+	for attempt := range maxAttempts {
+		p, err := pgxpool.NewWithConfig(
+			context.Background(), poolCfg)
+		if err != nil {
+			lastErr = fmt.Errorf("creating meta-db pool: %w", err)
+			logRetry("meta-db", attempt, maxAttempts,
+				backoff, lastErr)
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
 
-	if err := p.Ping(ctx); err != nil {
+		ctx, cancel := context.WithTimeout(
+			context.Background(), 5*time.Second,
+		)
+		err = p.Ping(ctx)
+		cancel()
+		if err == nil {
+			return p, nil
+		}
 		p.Close()
-		return nil, fmt.Errorf("pinging meta-db: %w", err)
+		lastErr = fmt.Errorf("pinging meta-db: %w", err)
+		if attempt < maxAttempts-1 {
+			logRetry("meta-db", attempt, maxAttempts,
+				backoff, lastErr)
+			time.Sleep(backoff)
+			backoff *= 2
+		}
 	}
-	return p, nil
+	return nil, fmt.Errorf(
+		"meta-db failed after %d attempts: %w",
+		maxAttempts, lastErr)
 }
 
 // initMetaDB bootstraps the meta database: schema, admin user,
@@ -165,7 +188,9 @@ func loadDatabasesFromStore(
 	return enabled, nil
 }
 
-// connectMonitoredDB creates and pings a pool for a monitored DB.
+// connectMonitoredDB creates and pings a pool for a monitored DB
+// with exponential backoff. Retries up to 5 times with delays of
+// 1s, 2s, 4s, 8s, 16s before giving up.
 func connectMonitoredDB(
 	dsn string, maxConns int,
 ) (*pgxpool.Pool, error) {
@@ -182,24 +207,55 @@ func connectMonitoredDB(
 	poolCfg.MaxConnIdleTime = 5 * time.Minute
 	poolCfg.HealthCheckPeriod = 30 * time.Second
 
-	p, err := pgxpool.NewWithConfig(context.Background(), poolCfg)
-	if err != nil {
-		return nil, fmt.Errorf("creating pool: %w", err)
-	}
+	const maxAttempts = 5
+	backoff := 1 * time.Second
+	var lastErr error
 
-	ctx, cancel := context.WithTimeout(
-		context.Background(), 5*time.Second,
-	)
-	defer cancel()
-	if err := p.Ping(ctx); err != nil {
+	for attempt := range maxAttempts {
+		p, err := pgxpool.NewWithConfig(
+			context.Background(), poolCfg)
+		if err != nil {
+			lastErr = fmt.Errorf("creating pool: %w", err)
+			logRetry("connect", attempt, maxAttempts,
+				backoff, lastErr)
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		ctx, cancel := context.WithTimeout(
+			context.Background(), 5*time.Second,
+		)
+		err = p.Ping(ctx)
+		cancel()
+		if err == nil {
+			return p, nil
+		}
 		p.Close()
-		return nil, fmt.Errorf("cannot connect: %w", err)
+		lastErr = fmt.Errorf("cannot connect: %w", err)
+		if attempt < maxAttempts-1 {
+			logRetry("connect", attempt, maxAttempts,
+				backoff, lastErr)
+			time.Sleep(backoff)
+			backoff *= 2
+		}
 	}
-	return p, nil
+	return nil, fmt.Errorf(
+		"failed after %d attempts: %w", maxAttempts, lastErr)
+}
+
+func logRetry(
+	component string, attempt, max int,
+	backoff time.Duration, err error,
+) {
+	logWarn(component,
+		"attempt %d/%d failed: %v — retrying in %s",
+		attempt+1, max, err, backoff)
 }
 
 // initMetaDBFleet loads databases from the meta-db store and
 // initializes fleet instances for each enabled database.
+// Starts a background goroutine to reconnect failed databases.
 func initMetaDBFleet(state *metaDBState) {
 	fleetMgr = fleet.NewManager(cfg)
 
@@ -218,6 +274,8 @@ func initMetaDBFleet(state *metaDBState) {
 	for _, rec := range records {
 		registerStoreDatabase(state, rec)
 	}
+
+	go fleetReconnectLoop(state)
 }
 
 // registerStoreDatabase connects to a database from a store
@@ -279,8 +337,12 @@ func bootstrapAndRegister(
 	)
 	go dbColl.Run(shutdownCtx)
 
+	// LLM features for meta-db registered databases.
+	dbOpt, dbAdvIface, dbTuner, dbBrief :=
+		buildFleetLLMFeatures(dbPool, dbPGVersion, dbColl)
+
 	dbAnal := analyzer.New(
-		dbPool, cfg, dbColl, nil, nil, nil, nil,
+		dbPool, cfg, dbColl, dbOpt, dbAdvIface, nil, dbTuner,
 		logStructuredWrapper,
 	)
 	go dbAnal.Run(shutdownCtx)
@@ -294,7 +356,76 @@ func bootstrapAndRegister(
 		updateInstanceFindings(ctx, inst)
 	}
 	dbCfg := storeRecordToDBConfig(rec)
-	go fleetDBOrchestrator(rec.Name, dbPool, dbExec, dbCfg)
+	go fleetDBOrchestrator(
+		rec.Name, dbPool, dbExec, dbBrief, dbCfg)
+}
+
+// fleetReconnectLoop periodically checks for failed instances and
+// attempts to reconnect with exponential backoff. Runs every 30s,
+// caps backoff at 5 minutes per database.
+func fleetReconnectLoop(state *metaDBState) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			retryFailedInstances(state)
+		case <-shutdownCtx.Done():
+			return
+		}
+	}
+}
+
+// retryFailedInstances finds instances with errors or nil pools
+// and attempts reconnection.
+func retryFailedInstances(state *metaDBState) {
+	instances := fleetMgr.Instances()
+	for name, inst := range instances {
+		if inst.Pool != nil && inst.Status.Error == "" {
+			continue // healthy
+		}
+		if inst.Stopped {
+			continue // manually stopped
+		}
+
+		logInfo("reconnect", "attempting reconnect for %q", name)
+
+		ctx, cancel := context.WithTimeout(
+			context.Background(), metaDBTimeout,
+		)
+		records, err := loadDatabasesFromStore(ctx, state.Store)
+		cancel()
+		if err != nil {
+			logWarn("reconnect", "load databases: %v", err)
+			return
+		}
+
+		for _, rec := range records {
+			if rec.Name != name {
+				continue
+			}
+			connStr, err := state.Store.GetConnectionString(
+				context.Background(), rec.ID)
+			if err != nil {
+				logWarn("reconnect",
+					"db %q: get connection: %v", name, err)
+				break
+			}
+			dbPool, err := connectMonitoredDB(
+				connStr, rec.MaxConnections)
+			if err != nil {
+				logWarn("reconnect",
+					"db %q: still unreachable: %v", name, err)
+				break
+			}
+			// Success — bootstrap and re-register.
+			logInfo("reconnect",
+				"db %q: reconnected successfully", name)
+			bootstrapAndRegister(rec, dbPool)
+			break
+		}
+	}
 }
 
 // detectPGVersion queries the PG version number from the pool.

@@ -618,8 +618,11 @@ func initFleetAndAPI() {
 func initFleetMultiDB() {
 	fleetMgr = fleet.NewManager(cfg)
 
-	// LLM client (shared across fleet).
+	// LLM client + manager (shared across fleet).
 	llmClient = llm.New(&cfg.LLM, logStructuredWrapper)
+	llmMgr = llm.NewManager(llmClient, nil, false)
+
+	var configPool *pgxpool.Pool // first connected DB used for config store
 
 	for i, dbCfg := range cfg.Databases {
 		name := dbCfg.Name
@@ -690,6 +693,18 @@ func initFleetMultiDB() {
 		}
 		schema.ReleaseAdvisoryLock(context.Background(), dbPool)
 
+		// Config schema migration (adds database_id column).
+		if err := schema.MigrateConfigSchema(
+			context.Background(), dbPool); err != nil {
+			logWarn("fleet",
+				"db %q: config migration: %v", name, err)
+		}
+
+		// Track first connected pool for sage.databases registration.
+		if configPool == nil {
+			configPool = dbPool
+		}
+
 		// Bootstrap admin user on first database only.
 		if i == 0 {
 			if err := bootstrapAdminIfEmpty(
@@ -716,13 +731,12 @@ func initFleetMultiDB() {
 			logStructuredWrapper)
 		go dbColl.Run(shutdownCtx)
 
-		// Per-database analyzer (no optimizer/advisor in fleet
-		// for now — just rules engine + forecaster + tuner).
+		// Per-database forecaster.
 		var fc *forecaster.Forecaster
 		if cfg.Forecaster.Enabled {
 			fcCfg := forecaster.ForecasterConfig{
-				Enabled:      cfg.Forecaster.Enabled,
-				LookbackDays: cfg.Forecaster.LookbackDays,
+				Enabled:             cfg.Forecaster.Enabled,
+				LookbackDays:        cfg.Forecaster.LookbackDays,
 				DiskWarnGrowthGBDay: cfg.Forecaster.DiskWarnGrowthGBDay,
 				ConnectionWarnPct:   cfg.Forecaster.ConnectionWarnPct,
 				CacheWarnThreshold:  cfg.Forecaster.CacheWarnThreshold,
@@ -731,8 +745,81 @@ func initFleetMultiDB() {
 				dbPool, fcCfg, logStructuredWrapper)
 		}
 
+		// Per-database optimizer.
+		var dbOpt *optimizer.Optimizer
+		if cfg.LLM.Optimizer.Enabled && llmClient.IsEnabled() {
+			optClient := llmClient
+			if cfg.LLM.OptimizerLLM.Enabled {
+				optClient = llm.NewOptimizerClient(
+					&cfg.LLM, &cfg.LLM.OptimizerLLM,
+					logStructuredWrapper,
+				)
+			}
+			var fallback *llm.Client
+			if cfg.LLM.OptimizerLLM.FallbackToGeneral &&
+				optClient != llmClient {
+				fallback = llmClient
+			}
+			dbOpt = optimizer.New(
+				optClient, fallback, dbPool,
+				&cfg.LLM.Optimizer, dbPGVersion, false,
+				cfg.LLM.OptimizerLLM.MaxOutputTokens,
+				logStructuredWrapper,
+			)
+		}
+
+		// Per-database advisor.
+		var dbAdvIface analyzer.ConfigAdvisor
+		if cfg.Advisor.Enabled && llmClient.IsEnabled() {
+			dbAdv := advisor.New(
+				dbPool, cfg, dbColl, llmMgr,
+				logStructuredWrapper,
+			)
+			dbAdvIface = dbAdv
+		}
+
+		// Per-database tuner.
+		var dbTuner *tuner.Tuner
+		if cfg.Tuner.Enabled {
+			hpAvail, _ := tuner.DetectHintPlan(
+				context.Background(), dbPool)
+			tunerCfg := tuner.TunerConfig{
+				Enabled:                cfg.Tuner.Enabled,
+				LLMEnabled:             cfg.Tuner.LLMEnabled,
+				WorkMemMaxMB:           cfg.Tuner.WorkMemMaxMB,
+				PlanTimeRatio:          cfg.Tuner.PlanTimeRatio,
+				NestedLoopRowThreshold: cfg.Tuner.NestedLoopRowThreshold,
+				ParallelMinTableRows:   cfg.Tuner.ParallelMinTableRows,
+				MinQueryCalls:          cfg.Tuner.MinQueryCalls,
+				VerifyAfterApply:       cfg.Tuner.VerifyAfterApply,
+				CascadeCooldownCycles:  cfg.Trust.CascadeCooldownCycles,
+			}
+			var tunerOpts []tuner.Option
+			if cfg.Tuner.LLMEnabled && llmMgr != nil {
+				tc := llmMgr.ForPurpose("query_tuning")
+				var fb *llm.Client
+				if cfg.LLM.OptimizerLLM.FallbackToGeneral &&
+					llmMgr.General != nil {
+					fb = llmMgr.General
+				}
+				tunerOpts = append(tunerOpts,
+					tuner.WithLLM(tc, fb))
+			}
+			dbTuner = tuner.New(dbPool, tunerCfg, hpAvail,
+				logStructuredWrapper, tunerOpts...)
+		}
+
+		// Per-database briefing worker.
+		var dbBrief *briefing.Worker
+		if llmClient.IsEnabled() {
+			dbBrief = briefing.New(
+				dbPool, cfg, llmClient,
+				logStructuredWrapper,
+			)
+		}
+
 		dbAnal := analyzer.New(
-			dbPool, cfg, dbColl, nil, nil, fc, nil,
+			dbPool, cfg, dbColl, dbOpt, dbAdvIface, fc, dbTuner,
 			logStructuredWrapper)
 		go dbAnal.Run(shutdownCtx)
 
@@ -777,23 +864,102 @@ func initFleetMultiDB() {
 
 		// Per-database orchestrator.
 		go fleetDBOrchestrator(
-			name, dbPool, dbExec, dbCfg)
+			name, dbPool, dbExec, dbBrief, dbCfg)
 
-		logInfo("fleet",
-			"db %q: initialized (collector+analyzer+executor)",
-			name)
+		features := "collector+analyzer+executor"
+		if dbOpt != nil {
+			features += "+optimizer"
+		}
+		if dbAdvIface != nil {
+			features += "+advisor"
+		}
+		if dbTuner != nil {
+			features += "+tuner"
+		}
+		if dbBrief != nil {
+			features += "+briefing"
+		}
+		logInfo("fleet", "db %q: initialized (%s)", name, features)
+	}
+
+	// Register fleet databases in sage.databases for config API.
+	if configPool != nil {
+		registerFleetDatabases(configPool)
 	}
 
 	logInfo("fleet", "%d databases initialized",
 		len(cfg.Databases))
 }
 
-// fleetDBOrchestrator runs executor and retention cycles for a
-// single fleet database.
+// registerFleetDatabases upserts all YAML-defined fleet databases
+// into sage.databases on the config pool so the per-database config
+// API can reference them by ID.
+func registerFleetDatabases(configPool *pgxpool.Pool) {
+	ctx, cancel := context.WithTimeout(
+		context.Background(), 10*time.Second)
+	defer cancel()
+
+	for _, dbCfg := range cfg.Databases {
+		trustLevel := dbCfg.TrustLevel
+		if trustLevel == "" {
+			trustLevel = cfg.Trust.Level
+		}
+		dbID, err := upsertFleetDatabase(
+			ctx, configPool, dbCfg, trustLevel)
+		if err != nil {
+			logWarn("fleet",
+				"db %q: register in sage.databases: %v",
+				dbCfg.Name, err)
+			continue
+		}
+		if inst := fleetMgr.GetInstance(dbCfg.Name); inst != nil {
+			inst.DatabaseID = dbID
+		}
+		logInfo("fleet",
+			"db %q: registered as database ID %d",
+			dbCfg.Name, dbID)
+	}
+}
+
+// upsertFleetDatabase inserts or updates a row in sage.databases
+// for a YAML-configured fleet database. Returns the database ID.
+func upsertFleetDatabase(
+	ctx context.Context, pool *pgxpool.Pool,
+	dbCfg config.DatabaseConfig, trustLevel string,
+) (int, error) {
+	var id int
+	err := pool.QueryRow(ctx, `
+		INSERT INTO sage.databases
+			(name, host, port, database_name, username,
+			 password_enc, sslmode, max_connections,
+			 trust_level, execution_mode)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'auto')
+		ON CONFLICT (name) DO UPDATE SET
+			host = EXCLUDED.host,
+			port = EXCLUDED.port,
+			database_name = EXCLUDED.database_name,
+			username = EXCLUDED.username,
+			sslmode = EXCLUDED.sslmode,
+			max_connections = EXCLUDED.max_connections,
+			trust_level = EXCLUDED.trust_level,
+			updated_at = now()
+		RETURNING id`,
+		dbCfg.Name, dbCfg.Host, dbCfg.Port,
+		dbCfg.Database, dbCfg.User,
+		[]byte{0}, // placeholder — fleet uses YAML creds
+		dbCfg.SSLMode, dbCfg.MaxConnections,
+		trustLevel,
+	).Scan(&id)
+	return id, err
+}
+
+// fleetDBOrchestrator runs executor, briefing, and retention
+// cycles for a single fleet database.
 func fleetDBOrchestrator(
 	name string,
 	dbPool *pgxpool.Pool,
 	dbExec *executor.Executor,
+	dbBrief *briefing.Worker,
 	dbCfg config.DatabaseConfig,
 ) {
 	interval := cfg.Analyzer.Interval() + 5*time.Second
@@ -809,6 +975,19 @@ func fleetDBOrchestrator(
 			if dbExec != nil {
 				dbExec.RunCycle(shutdownCtx, false)
 			}
+			// Briefing (scheduled).
+			if dbBrief != nil &&
+				dbBrief.ShouldRun(time.Now()) {
+				text, bErr := dbBrief.Generate(shutdownCtx)
+				if bErr != nil {
+					logWarn("briefing",
+						"[%s] generation failed: %v",
+						name, bErr)
+				} else {
+					dbBrief.Dispatch(text)
+					dbBrief.MarkRan()
+				}
+			}
 			// Update fleet status for this instance.
 			if inst := fleetMgr.GetInstance(name); inst != nil {
 				updateInstanceFindings(shutdownCtx, inst)
@@ -817,6 +996,94 @@ func fleetDBOrchestrator(
 			return
 		}
 	}
+}
+
+// buildFleetLLMFeatures creates per-database optimizer, advisor,
+// tuner, and briefing worker using the shared LLM client.
+func buildFleetLLMFeatures(
+	dbPool *pgxpool.Pool,
+	dbPGVersion int,
+	dbColl *collector.Collector,
+) (
+	*optimizer.Optimizer,
+	analyzer.ConfigAdvisor,
+	*tuner.Tuner,
+	*briefing.Worker,
+) {
+	if llmClient == nil || !llmClient.IsEnabled() {
+		return nil, nil, nil, nil
+	}
+
+	// Optimizer.
+	var dbOpt *optimizer.Optimizer
+	if cfg.LLM.Optimizer.Enabled {
+		optClient := llmClient
+		if cfg.LLM.OptimizerLLM.Enabled {
+			optClient = llm.NewOptimizerClient(
+				&cfg.LLM, &cfg.LLM.OptimizerLLM,
+				logStructuredWrapper,
+			)
+		}
+		var fallback *llm.Client
+		if cfg.LLM.OptimizerLLM.FallbackToGeneral &&
+			optClient != llmClient {
+			fallback = llmClient
+		}
+		dbOpt = optimizer.New(
+			optClient, fallback, dbPool,
+			&cfg.LLM.Optimizer, dbPGVersion, false,
+			cfg.LLM.OptimizerLLM.MaxOutputTokens,
+			logStructuredWrapper,
+		)
+	}
+
+	// Advisor.
+	var dbAdvIface analyzer.ConfigAdvisor
+	if cfg.Advisor.Enabled {
+		dbAdv := advisor.New(
+			dbPool, cfg, dbColl, llmMgr,
+			logStructuredWrapper,
+		)
+		dbAdvIface = dbAdv
+	}
+
+	// Tuner.
+	var dbTuner *tuner.Tuner
+	if cfg.Tuner.Enabled {
+		hpAvail, _ := tuner.DetectHintPlan(
+			context.Background(), dbPool)
+		tunerCfg := tuner.TunerConfig{
+			Enabled:                cfg.Tuner.Enabled,
+			LLMEnabled:             cfg.Tuner.LLMEnabled,
+			WorkMemMaxMB:           cfg.Tuner.WorkMemMaxMB,
+			PlanTimeRatio:          cfg.Tuner.PlanTimeRatio,
+			NestedLoopRowThreshold: cfg.Tuner.NestedLoopRowThreshold,
+			ParallelMinTableRows:   cfg.Tuner.ParallelMinTableRows,
+			MinQueryCalls:          cfg.Tuner.MinQueryCalls,
+			VerifyAfterApply:       cfg.Tuner.VerifyAfterApply,
+			CascadeCooldownCycles:  cfg.Trust.CascadeCooldownCycles,
+		}
+		var tunerOpts []tuner.Option
+		if cfg.Tuner.LLMEnabled && llmMgr != nil {
+			tc := llmMgr.ForPurpose("query_tuning")
+			var fb *llm.Client
+			if cfg.LLM.OptimizerLLM.FallbackToGeneral &&
+				llmMgr.General != nil {
+				fb = llmMgr.General
+			}
+			tunerOpts = append(tunerOpts,
+				tuner.WithLLM(tc, fb))
+		}
+		dbTuner = tuner.New(dbPool, tunerCfg, hpAvail,
+			logStructuredWrapper, tunerOpts...)
+	}
+
+	// Briefing.
+	dbBrief := briefing.New(
+		dbPool, cfg, llmClient, logStructuredWrapper,
+	)
+
+	return dbOpt, dbAdvIface, dbTuner, dbBrief
 }
 
 func resolveDBName() string {
@@ -883,12 +1150,23 @@ func startAPIServer(rl *RateLimiter) {
 			Store:    actionStore,
 			Executor: exec,
 		}
+	} else if fleetMgr != nil {
+		// In meta-db/fleet mode the global actionStore is nil.
+		// Use fleet-aware handlers that dynamically resolve
+		// pools on each request (survives delete/re-add).
+		actionDeps = &api.ActionDeps{
+			Fleet: fleetMgr,
+		}
 	}
 	var dbDeps *api.DatabaseDeps
 	if globalMetaState != nil && globalMetaState.Store != nil {
+		metaState := globalMetaState
 		dbDeps = &api.DatabaseDeps{
-			Store: globalMetaState.Store,
+			Store: metaState.Store,
 			Fleet: fleetMgr,
+			OnCreate: func(rec store.DatabaseRecord) {
+				registerStoreDatabase(metaState, rec)
+			},
 		}
 	}
 	router := api.NewRouterFull(

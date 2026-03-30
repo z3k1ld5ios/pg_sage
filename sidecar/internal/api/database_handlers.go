@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -11,8 +12,9 @@ import (
 
 // DatabaseDeps holds dependencies for managed database handlers.
 type DatabaseDeps struct {
-	Store *store.DatabaseStore
-	Fleet *fleet.DatabaseManager
+	Store    *store.DatabaseStore
+	Fleet    *fleet.DatabaseManager
+	OnCreate func(rec store.DatabaseRecord) // register with fleet
 }
 
 // registerDatabaseRoutes registers /api/v1/databases/managed
@@ -53,6 +55,12 @@ func registerDatabaseRoutes(
 		testManagedDBHandler(deps)))
 	mux.Handle(
 		"POST /api/v1/databases/managed/{id}/test", testH)
+
+	testPreview := adminOnly(http.HandlerFunc(
+		testConnectionPreviewHandler()))
+	mux.Handle(
+		"POST /api/v1/databases/managed/test-connection",
+		testPreview)
 }
 
 func listManagedDBHandler(
@@ -120,6 +128,9 @@ func createManagedDBHandler(
 			jsonError(w, "created but failed to read back",
 				http.StatusInternalServerError)
 			return
+		}
+		if deps.OnCreate != nil {
+			go deps.OnCreate(*rec)
 		}
 		w.WriteHeader(http.StatusCreated)
 		jsonResponse(w, dbRecordToMap(*rec))
@@ -206,6 +217,33 @@ func testManagedDBHandler(
 				http.StatusNotFound)
 			return
 		}
+		result := testFromConnString(r.Context(), connStr)
+		jsonResponse(w, result)
+	}
+}
+
+func testConnectionPreviewHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req dbCreateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid request body",
+				http.StatusBadRequest)
+			return
+		}
+		ssl := req.SSLMode
+		if ssl == "" {
+			ssl = "require"
+		}
+		port := req.Port
+		if port == 0 {
+			port = 5432
+		}
+		connStr := fmt.Sprintf(
+			"postgres://%s:%s@%s:%d/%s?sslmode=%s"+
+				"&connect_timeout=10",
+			req.Username, req.Password,
+			req.Host, port, req.DatabaseName, ssl,
+		)
 		result := testFromConnString(r.Context(), connStr)
 		jsonResponse(w, result)
 	}

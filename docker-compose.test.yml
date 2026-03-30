@@ -1,0 +1,95 @@
+services:
+  pg-target:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: testdb
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./test-fixtures/seed.sql:/docker-entrypoint-initdb.d/seed.sql:ro
+    command: >
+      postgres
+        -c shared_preload_libraries=pg_stat_statements
+        -c pg_stat_statements.track=all
+        -c track_activity_query_size=4096
+        -c log_statement=all
+        -c track_io_timing=on
+    networks:
+      - test-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  pg-target-2:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: testdb2
+    ports:
+      - "5434:5432"
+    volumes:
+      - ./test-fixtures/seed.sql:/docker-entrypoint-initdb.d/seed.sql:ro
+    command: >
+      postgres
+        -c shared_preload_libraries=pg_stat_statements
+        -c pg_stat_statements.track=all
+    networks:
+      - test-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  llm-mock:
+    build: ./test-fixtures/llm-mock/
+    ports:
+      - "11434:11434"
+    networks:
+      - test-net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:11434/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  webhook-mock:
+    build: ./test-fixtures/webhook-mock/
+    ports:
+      - "9999:9999"
+    networks:
+      - test-net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9999/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  sidecar:
+    build: ./sidecar/
+    depends_on:
+      pg-target:
+        condition: service_healthy
+      pg-target-2:
+        condition: service_healthy
+      webhook-mock:
+        condition: service_healthy
+    ports:
+      - "8081:8080"
+      - "9188:9187"
+    volumes:
+      - ./test-fixtures/config.test.yaml:/app/config.yaml:ro
+    environment:
+      SAGE_CONFIG_PATH: /app/config.yaml
+      SAGE_LLM_API_KEY: ${SAGE_LLM_API_KEY:-AIzaSyCumGN66Tx2XBWflrWbULd5PTYn0r5t0eM}
+    networks:
+      - test-net
+
+networks:
+  test-net:
+    driver: bridge

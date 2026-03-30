@@ -83,14 +83,14 @@ export function ChannelsTab() {
   async function handleToggle(ch) {
     try {
       const res = await fetch(
-        `/api/v1/notifications/channels/${ch.ID}`, {
+        `/api/v1/notifications/channels/${ch.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
           body: JSON.stringify({
-            name: ch.Name,
-            config: ch.Config,
-            enabled: !ch.Enabled,
+            name: ch.name,
+            config: ch.config,
+            enabled: !ch.enabled,
           }),
         })
       if (!res.ok) throw new Error('Update failed')
@@ -260,34 +260,34 @@ function ChannelTable({
         </thead>
         <tbody>
           {channels.map(ch => (
-            <tr key={ch.ID} style={{
+            <tr key={ch.id} style={{
               borderBottom: '1px solid var(--border)',
             }}>
               <td className="px-4 py-2"
                 style={{ color: 'var(--text-primary)' }}>
-                {ch.Name}
+                {ch.name}
               </td>
               <td className="px-4 py-2"
                 style={{ color: 'var(--text-secondary)' }}>
-                {ch.Type}
+                {ch.type}
               </td>
               <td className="px-4 py-2">
                 <button onClick={() => onToggle(ch)}
                   className="text-xs px-2 py-1 rounded"
                   style={{
-                    color: ch.Enabled
+                    color: ch.enabled
                       ? '#22c55e' : '#ef4444',
                   }}>
-                  {ch.Enabled ? 'ON' : 'OFF'}
+                  {ch.enabled ? 'ON' : 'OFF'}
                 </button>
               </td>
               <td className="px-4 py-2 text-right">
-                <button onClick={() => onTest(ch.ID)}
+                <button onClick={() => onTest(ch.id)}
                   className="px-2 py-1 rounded text-xs mr-2"
                   style={{ color: 'var(--accent)' }}>
                   Test
                 </button>
-                <button onClick={() => onDelete(ch.ID)}
+                <button onClick={() => onDelete(ch.id)}
                   className="px-2 py-1 rounded text-xs"
                   style={{ color: '#ef4444' }}>
                   Delete

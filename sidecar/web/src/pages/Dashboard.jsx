@@ -206,7 +206,8 @@ export function Dashboard({ database }) {
   const dbParam = database && database !== 'all'
     ? `?database=${database}` : ''
   const { data, loading, error, refetch } = useAPI('/api/v1/databases')
-  const findings = useAPI(`/api/v1/findings${dbParam}&limit=5`)
+  const sep = dbParam ? '&' : '?'
+  const findings = useAPI(`/api/v1/findings${dbParam}${sep}limit=5`)
 
   if (loading) return <LoadingSpinner />
   if (error) return <ErrorBanner message={error} onRetry={refetch} />

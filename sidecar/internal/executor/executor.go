@@ -36,10 +36,11 @@ type Executor struct {
 	rampStart     time.Time
 	recentActions map[string]time.Time
 	logFn         func(string, string, ...any)
-	actionStore   ActionProposer
-	execMode      string // auto, approval, manual
-	dispatcher    EventDispatcher
-	databaseName  string
+	actionStore        ActionProposer
+	execMode           string // auto, approval, manual
+	dispatcher         EventDispatcher
+	databaseName       string
+	trustLevelOverride string
 }
 
 // New creates a new Executor.
@@ -83,6 +84,20 @@ func (e *Executor) WithDatabaseName(name string) {
 	e.databaseName = name
 }
 
+// SetTrustLevel overrides the global trust level for this
+// executor instance. Empty string clears the override.
+func (e *Executor) SetTrustLevel(level string) {
+	e.trustLevelOverride = level
+}
+
+// TrustLevel returns the effective trust level for this executor.
+func (e *Executor) TrustLevel() string {
+	if e.trustLevelOverride != "" {
+		return e.trustLevelOverride
+	}
+	return e.cfg.Trust.Level
+}
+
 // SetExecutionMode changes the execution mode at runtime.
 func (e *Executor) SetExecutionMode(mode string) {
 	e.execMode = mode
@@ -91,6 +106,21 @@ func (e *Executor) SetExecutionMode(mode string) {
 // ExecutionMode returns the current execution mode.
 func (e *Executor) ExecutionMode() string {
 	return e.execMode
+}
+
+// shouldExecute checks whether a finding should be executed,
+// respecting any per-instance trust level override.
+func (e *Executor) shouldExecute(
+	f analyzer.Finding, isReplica, emergencyStop bool,
+) bool {
+	if e.trustLevelOverride == "" {
+		return ShouldExecute(
+			f, e.cfg, e.rampStart, isReplica, emergencyStop)
+	}
+	cfgCopy := *e.cfg
+	cfgCopy.Trust.Level = e.trustLevelOverride
+	return ShouldExecute(
+		f, &cfgCopy, e.rampStart, isReplica, emergencyStop)
 }
 
 // RunCycle is called after each analyzer cycle to evaluate and execute
@@ -119,9 +149,7 @@ func (e *Executor) RunCycle(ctx context.Context, isReplica bool) {
 			continue
 		}
 
-		if !ShouldExecute(
-			f, e.cfg, e.rampStart, isReplica, emergencyStop,
-		) {
+		if !e.shouldExecute(f, isReplica, emergencyStop) {
 			continue
 		}
 

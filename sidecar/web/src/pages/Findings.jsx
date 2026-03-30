@@ -127,8 +127,27 @@ export function Findings({ database, user }) {
 function FindingDetail({ row, canAct, onActionDone }) {
   const [showModal, setShowModal] = useState(false)
   const [executing, setExecuting] = useState(false)
+  const [suppressing, setSuppressing] = useState(false)
   const [result, setResult] = useState(null)
   const [showRawJson, setShowRawJson] = useState(false)
+
+  async function handleSuppress() {
+    setSuppressing(true)
+    try {
+      const action = row.status === 'suppressed'
+        ? 'unsuppress' : 'suppress'
+      const res = await fetch(
+        `/api/v1/findings/${row.id}/${action}`,
+        { method: 'POST', credentials: 'include' },
+      )
+      if (!res.ok) throw new Error('Failed')
+      if (onActionDone) onActionDone()
+    } catch (err) {
+      setResult({ type: 'error', text: err.message })
+    } finally {
+      setSuppressing(false)
+    }
+  }
 
   async function handleExecute() {
     setExecuting(true)
@@ -241,66 +260,89 @@ function FindingDetail({ row, canAct, onActionDone }) {
         </div>
       )}
 
-      {canAct && row.recommended_sql && row.status === 'open'
-        && !row.acted_on_at && (
-        <div>
-          {risk && (
-            <span className="inline-block text-xs font-medium
-              px-2 py-0.5 rounded mr-2 mb-2"
-              style={{
-                background: risk.background,
-                color: '#fff',
-              }}>
-              {risk.label}
-            </span>
-          )}
-          {showModal ? (
-            <div className="p-3 rounded space-y-2"
-              style={{
-                background: 'var(--bg-primary)',
-                border: '1px solid var(--border)',
-              }}>
-              <div className="text-sm font-medium"
-                style={{ color: 'var(--text-primary)' }}>
-                Confirm execution:
+      <div className="flex gap-2 flex-wrap">
+        {canAct && row.recommended_sql && row.status === 'open'
+          && !row.acted_on_at && (
+          <>
+            {risk && (
+              <span className="inline-block text-xs font-medium
+                px-2 py-0.5 rounded"
+                style={{
+                  background: risk.background,
+                  color: '#fff',
+                }}>
+                {risk.label}
+              </span>
+            )}
+            {showModal ? (
+              <div className="w-full p-3 rounded space-y-2"
+                style={{
+                  background: 'var(--bg-primary)',
+                  border: '1px solid var(--border)',
+                }}>
+                <div className="text-sm font-medium"
+                  style={{ color: 'var(--text-primary)' }}>
+                  Confirm execution:
+                </div>
+                <SQLBlock sql={row.recommended_sql} />
+                <div className="flex gap-2">
+                  <button onClick={handleExecute}
+                    disabled={executing}
+                    className="px-3 py-1.5 rounded text-sm"
+                    style={{
+                      background: 'var(--green)',
+                      color: '#fff',
+                      opacity: executing ? 0.5 : 1,
+                    }}>
+                    {executing ? 'Executing...' : 'Execute'}
+                  </button>
+                  <button
+                    onClick={() => setShowModal(false)}
+                    className="px-3 py-1.5 rounded text-sm"
+                    style={{
+                      background: 'var(--bg-card)',
+                      color: 'var(--text-secondary)',
+                      border: '1px solid var(--border)',
+                    }}>
+                    Cancel
+                  </button>
+                </div>
               </div>
-              <SQLBlock sql={row.recommended_sql} />
-              <div className="flex gap-2">
-                <button onClick={handleExecute}
-                  disabled={executing}
-                  className="px-3 py-1.5 rounded text-sm"
-                  style={{
-                    background: 'var(--green)',
-                    color: '#fff',
-                    opacity: executing ? 0.5 : 1,
-                  }}>
-                  {executing ? 'Executing...' : 'Execute'}
-                </button>
-                <button
-                  onClick={() => setShowModal(false)}
-                  className="px-3 py-1.5 rounded text-sm"
-                  style={{
-                    background: 'var(--bg-card)',
-                    color: 'var(--text-secondary)',
-                    border: '1px solid var(--border)',
-                  }}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              onClick={() => setShowModal(true)}
-              className="px-3 py-1.5 rounded text-sm"
-              style={{
-                background: 'var(--accent)',
-                color: '#fff',
-              }}>
-              Take Action
-            </button>
-          )}
-        </div>
-      )}
+            ) : (
+              <button
+                onClick={() => setShowModal(true)}
+                className="px-3 py-1.5 rounded text-sm"
+                style={{
+                  background: 'var(--accent)',
+                  color: '#fff',
+                }}>
+                Take Action
+              </button>
+            )}
+          </>
+        )}
+
+        {canAct && (row.status === 'open'
+          || row.status === 'suppressed') && (
+          <button
+            data-testid="suppress-button"
+            onClick={handleSuppress}
+            disabled={suppressing}
+            className="px-3 py-1.5 rounded text-sm"
+            style={{
+              background: 'var(--bg-card)',
+              color: 'var(--text-secondary)',
+              border: '1px solid var(--border)',
+              opacity: suppressing ? 0.5 : 1,
+            }}>
+            {suppressing
+              ? (row.status === 'suppressed'
+                ? 'Restoring...' : 'Suppressing...')
+              : (row.status === 'suppressed'
+                ? 'Unsuppress' : 'Suppress')}
+          </button>
+        )}
+      </div>
     </div>
   )
 }

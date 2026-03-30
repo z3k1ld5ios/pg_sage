@@ -18,9 +18,12 @@ import (
 
 // ActionDeps holds optional dependencies for action management
 // routes. Pass nil to skip registering action routes.
+// In fleet mode, Fleet is set so handlers can dynamically
+// resolve the current pool (survives database delete/re-add).
 type ActionDeps struct {
 	Store    *store.ActionStore
 	Executor *executor.Executor
+	Fleet    *fleet.DatabaseManager
 }
 
 // NewRouter creates the API + dashboard HTTP handler.
@@ -76,13 +79,12 @@ func NewRouterFull(
 		}
 		registerAuthRoutes(apiMux, pool, oauthProvider, cfg)
 		registerUserRoutes(apiMux, pool)
-		registerConfigRoutes(apiMux, pool, cfg)
+		registerConfigRoutes(apiMux, pool, cfg, mgr)
 		registerNotificationRoutes(apiMux, pool)
 	}
-	if actions != nil && actions.Store != nil {
-		registerActionRoutes(
-			apiMux, actions.Store, actions.Executor,
-		)
+	if actions != nil && (actions.Store != nil ||
+		actions.Fleet != nil) {
+		registerActionRoutes(apiMux, actions)
 	}
 	if dbDeps != nil && dbDeps.Store != nil {
 		registerDatabaseRoutes(apiMux, dbDeps)
@@ -222,25 +224,31 @@ func registerConfigRoutes(
 	mux *http.ServeMux,
 	pool *pgxpool.Pool,
 	cfg *config.Config,
+	mgr ...*fleet.DatabaseManager,
 ) {
 	adminOnly := RequireRole("admin")
 	cs := store.NewConfigStore(pool)
+
+	var fm *fleet.DatabaseManager
+	if len(mgr) > 0 {
+		fm = mgr[0]
+	}
 
 	globalGet := adminOnly(http.HandlerFunc(
 		configGlobalGetHandler(cs, cfg)))
 	mux.Handle("GET /api/v1/config/global", globalGet)
 
 	globalPut := adminOnly(http.HandlerFunc(
-		configGlobalPutHandler(cs, cfg)))
+		configGlobalPutHandler(cs, cfg, fm)))
 	mux.Handle("PUT /api/v1/config/global", globalPut)
 
 	dbGet := adminOnly(http.HandlerFunc(
-		configDBGetHandler(cs, cfg)))
+		configDBGetHandler(cs, cfg, pool)))
 	mux.Handle(
 		"GET /api/v1/config/databases/{id}", dbGet)
 
 	dbPut := adminOnly(http.HandlerFunc(
-		configDBPutHandler(cs, cfg)))
+		configDBPutHandler(cs, cfg, pool, fm)))
 	mux.Handle(
 		"PUT /api/v1/config/databases/{id}", dbPut)
 
@@ -251,35 +259,64 @@ func registerConfigRoutes(
 
 func registerActionRoutes(
 	mux *http.ServeMux,
-	as *store.ActionStore,
-	exec *executor.Executor,
+	deps *ActionDeps,
 ) {
 	operatorUp := RequireRole("admin", "operator")
 
-	pendingH := operatorUp(http.HandlerFunc(
-		pendingActionsHandler(as)))
-	mux.Handle(
-		"GET /api/v1/actions/pending", pendingH)
+	if deps.Fleet != nil {
+		// Fleet mode: dynamically resolve pool on each
+		// request so delete/re-add cycles don't break.
+		pendingH := operatorUp(http.HandlerFunc(
+			fleetPendingActionsHandler(deps.Fleet)))
+		mux.Handle(
+			"GET /api/v1/actions/pending", pendingH)
+		mux.HandleFunc(
+			"GET /api/v1/actions/pending/count",
+			fleetPendingCountHandler(deps.Fleet))
+	} else {
+		pendingH := operatorUp(http.HandlerFunc(
+			pendingActionsHandler(deps.Store)))
+		mux.Handle(
+			"GET /api/v1/actions/pending", pendingH)
+		mux.HandleFunc(
+			"GET /api/v1/actions/pending/count",
+			pendingCountHandler(deps.Store))
+	}
 
-	approveH := operatorUp(http.HandlerFunc(
-		approveActionHandler(as, exec)))
-	mux.Handle(
-		"POST /api/v1/actions/{id}/approve", approveH)
+	if deps.Store != nil && deps.Executor != nil {
+		approveH := operatorUp(http.HandlerFunc(
+			approveActionHandler(
+				deps.Store, deps.Executor)))
+		mux.Handle(
+			"POST /api/v1/actions/{id}/approve", approveH)
 
-	rejectH := operatorUp(http.HandlerFunc(
-		rejectActionHandler(as)))
-	mux.Handle(
-		"POST /api/v1/actions/{id}/reject", rejectH)
+		rejectH := operatorUp(http.HandlerFunc(
+			rejectActionHandler(deps.Store)))
+		mux.Handle(
+			"POST /api/v1/actions/{id}/reject", rejectH)
 
-	execH := operatorUp(http.HandlerFunc(
-		manualExecuteHandler(exec)))
-	mux.Handle(
-		"POST /api/v1/actions/execute", execH)
-
-	// Pending count available to all roles for nav badge.
-	mux.HandleFunc(
-		"GET /api/v1/actions/pending/count",
-		pendingCountHandler(as))
+		execH := operatorUp(http.HandlerFunc(
+			manualExecuteHandler(deps.Executor)))
+		mux.Handle(
+			"POST /api/v1/actions/execute", execH)
+	} else {
+		// Fleet mode without global store/executor:
+		// approve/reject/execute not yet supported
+		// fleet-wide. Return 501 instead of crashing.
+		notImpl := operatorUp(http.HandlerFunc(
+			func(w http.ResponseWriter, _ *http.Request) {
+				jsonError(w,
+					"action approval not available "+
+						"in fleet mode yet",
+					http.StatusNotImplemented)
+			}))
+		mux.Handle(
+			"POST /api/v1/actions/{id}/approve", notImpl)
+		mux.Handle(
+			"POST /api/v1/actions/{id}/reject", notImpl)
+		mux.Handle(
+			"POST /api/v1/actions/execute", notImpl)
+	}
 }
 
 func registerNotificationRoutes(

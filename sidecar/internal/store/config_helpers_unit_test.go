@@ -659,11 +659,9 @@ func TestValidateConfigValue_Comprehensive(t *testing.T) {
 		{"trust.level", "autonomous", false},
 		{"trust.level", "invalid", true},
 
-		// exec_mode
-		{"execution_mode", "auto", false},
-		{"execution_mode", "approval", false},
-		{"execution_mode", "manual", false},
-		{"execution_mode", "invalid", true},
+		// execution_mode is no longer a config key — it lives in
+		// sage.databases. Validate it's rejected as unknown.
+		{"execution_mode", "auto", true},
 
 		// string (always valid)
 		{"trust.maintenance_window", "", false},

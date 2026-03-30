@@ -37,7 +37,6 @@ var allowedConfigKeys = map[string]string{
 	"safety.query_timeout_ms":        "int_pos",
 	"safety.ddl_timeout_seconds":     "int_pos",
 	"safety.lock_timeout_ms":         "int_pos",
-	"execution_mode":                 "exec_mode",
 	"llm.enabled":                    "bool",
 	"llm.endpoint":                   "string",
 	"llm.api_key":                    "string",
