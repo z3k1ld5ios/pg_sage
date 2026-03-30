@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/pg-sage/sidecar/internal/config"
+	"github.com/pg-sage/sidecar/internal/fleet"
 )
 
 // --- configGlobalGetHandler ---
@@ -28,7 +29,7 @@ func TestConfigGlobalPutHandler_MalformedJSON(t *testing.T) {
 	cfg := &config.Config{}
 	// nil ConfigStore -- we never reach it because JSON parse
 	// fails first.
-	handler := configGlobalPutHandler(nil, cfg)
+	handler := configGlobalPutHandler(nil, cfg, nil)
 
 	w := doRequest(
 		handler, "PUT", "/api/v1/config/global",
@@ -48,7 +49,7 @@ func TestConfigGlobalPutHandler_MalformedJSON(t *testing.T) {
 
 func TestConfigGlobalPutHandler_EmptyObject(t *testing.T) {
 	cfg := &config.Config{}
-	handler := configGlobalPutHandler(nil, cfg)
+	handler := configGlobalPutHandler(nil, cfg, nil)
 
 	// Empty object means no keys to iterate, so
 	// applyConfigOverrides returns no errors.
@@ -71,7 +72,7 @@ func TestConfigGlobalPutHandler_ExtractsUserFromContext(
 	t *testing.T,
 ) {
 	cfg := &config.Config{}
-	handler := configGlobalPutHandler(nil, cfg)
+	handler := configGlobalPutHandler(nil, cfg, nil)
 
 	// With a user in context and empty body, should succeed.
 	w := doRequestWithUser(
@@ -85,7 +86,7 @@ func TestConfigGlobalPutHandler_ExtractsUserFromContext(
 
 func TestConfigGlobalPutHandler_ContentType(t *testing.T) {
 	cfg := &config.Config{}
-	handler := configGlobalPutHandler(nil, cfg)
+	handler := configGlobalPutHandler(nil, cfg, nil)
 	w := doRequest(
 		handler, "PUT", "/api/v1/config/global",
 		"not json")
@@ -101,7 +102,7 @@ func TestConfigGlobalPutHandler_ContentType(t *testing.T) {
 
 func TestConfigDBGetHandler_InvalidID(t *testing.T) {
 	cfg := &config.Config{}
-	handler := configDBGetHandler(nil, cfg)
+	handler := configDBGetHandler(nil, cfg, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(
@@ -126,7 +127,7 @@ func TestConfigDBGetHandler_InvalidID(t *testing.T) {
 
 func TestConfigDBGetHandler_ZeroID(t *testing.T) {
 	cfg := &config.Config{}
-	handler := configDBGetHandler(nil, cfg)
+	handler := configDBGetHandler(nil, cfg, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(
@@ -152,7 +153,7 @@ func TestConfigDBGetHandler_ZeroID(t *testing.T) {
 
 func TestConfigDBGetHandler_NegativeID(t *testing.T) {
 	cfg := &config.Config{}
-	handler := configDBGetHandler(nil, cfg)
+	handler := configDBGetHandler(nil, cfg, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(
@@ -172,7 +173,7 @@ func TestConfigDBGetHandler_NegativeID(t *testing.T) {
 
 func TestConfigDBPutHandler_InvalidID(t *testing.T) {
 	cfg := &config.Config{}
-	handler := configDBPutHandler(nil, cfg)
+	handler := configDBPutHandler(nil, cfg, nil, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(
@@ -199,7 +200,7 @@ func TestConfigDBPutHandler_InvalidID(t *testing.T) {
 
 func TestConfigDBPutHandler_ZeroID(t *testing.T) {
 	cfg := &config.Config{}
-	handler := configDBPutHandler(nil, cfg)
+	handler := configDBPutHandler(nil, cfg, nil, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(
@@ -219,7 +220,7 @@ func TestConfigDBPutHandler_ZeroID(t *testing.T) {
 
 func TestConfigDBPutHandler_MalformedJSON(t *testing.T) {
 	cfg := &config.Config{}
-	handler := configDBPutHandler(nil, cfg)
+	handler := configDBPutHandler(nil, cfg, nil, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(
@@ -246,7 +247,7 @@ func TestConfigDBPutHandler_MalformedJSON(t *testing.T) {
 
 func TestConfigDBPutHandler_EmptyBody(t *testing.T) {
 	cfg := &config.Config{}
-	handler := configDBPutHandler(nil, cfg)
+	handler := configDBPutHandler(nil, cfg, nil, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(
@@ -269,6 +270,110 @@ func TestConfigDBPutHandler_EmptyBody(t *testing.T) {
 	if resp["status"] != "updated" {
 		t.Errorf("status: got %q, want 'updated'",
 			resp["status"])
+	}
+}
+
+func TestConfigDBPutHandler_FleetValidation_NotFound(
+	t *testing.T,
+) {
+	cfg := &config.Config{}
+	mgr := fleet.NewManager(cfg)
+	// Register one instance with DatabaseID=1.
+	mgr.RegisterInstance(&fleet.DatabaseInstance{
+		Name:       "testdb",
+		DatabaseID: 1,
+		Config:     config.DatabaseConfig{Name: "testdb"},
+		Status:     &fleet.InstanceStatus{},
+	})
+
+	handler := configDBPutHandler(nil, cfg, nil, mgr)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(
+		"PUT /api/v1/config/databases/{id}", handler)
+
+	// Request for DB ID 99 — does not exist.
+	req := httptest.NewRequest(
+		"PUT", "/api/v1/config/databases/99",
+		strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status: got %d, want 404", w.Code)
+	}
+
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["error"] != "database 99 not found" {
+		t.Errorf("error: got %q, want 'database 99 not found'",
+			resp["error"])
+	}
+}
+
+func TestConfigDBPutHandler_FleetValidation_Found(
+	t *testing.T,
+) {
+	cfg := &config.Config{}
+	mgr := fleet.NewManager(cfg)
+	mgr.RegisterInstance(&fleet.DatabaseInstance{
+		Name:       "testdb",
+		DatabaseID: 1,
+		Config:     config.DatabaseConfig{Name: "testdb"},
+		Status:     &fleet.InstanceStatus{},
+	})
+
+	handler := configDBPutHandler(nil, cfg, nil, mgr)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(
+		"PUT /api/v1/config/databases/{id}", handler)
+
+	// Request for DB ID 1 — exists, empty body → success.
+	req := httptest.NewRequest(
+		"PUT", "/api/v1/config/databases/1",
+		strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+}
+
+func TestSyncTrustLevelToFleet(t *testing.T) {
+	cfg := &config.Config{}
+	mgr := fleet.NewManager(cfg)
+	mgr.RegisterInstance(&fleet.DatabaseInstance{
+		Name:       "db1",
+		DatabaseID: 1,
+		Config:     config.DatabaseConfig{Name: "db1"},
+		Status: &fleet.InstanceStatus{
+			TrustLevel: "advisory",
+		},
+	})
+	mgr.RegisterInstance(&fleet.DatabaseInstance{
+		Name:       "db2",
+		DatabaseID: 2,
+		Config:     config.DatabaseConfig{Name: "db2"},
+		Status: &fleet.InstanceStatus{
+			TrustLevel: "advisory",
+		},
+	})
+
+	syncTrustLevelToFleet(mgr, "autonomous")
+
+	for _, name := range []string{"db1", "db2"} {
+		inst := mgr.GetInstance(name)
+		if inst == nil {
+			t.Fatalf("instance %q not found", name)
+		}
+		if inst.Status.TrustLevel != "autonomous" {
+			t.Errorf("db %q: trust level got %q, want autonomous",
+				name, inst.Status.TrustLevel)
+		}
 	}
 }
 

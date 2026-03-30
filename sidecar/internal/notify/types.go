@@ -2,20 +2,20 @@ package notify
 
 // Channel represents a notification delivery channel.
 type Channel struct {
-	ID      int
-	Name    string
-	Type    string // "slack", "email", or "pagerduty"
-	Config  map[string]string
-	Enabled bool
+	ID      int               `json:"id"`
+	Name    string            `json:"name"`
+	Type    string            `json:"type"`
+	Config  map[string]string `json:"config"`
+	Enabled bool              `json:"enabled"`
 }
 
 // Rule maps events to channels with severity filtering.
 type Rule struct {
-	ID          int
-	ChannelID   int
-	Event       string // event type
-	MinSeverity string // info, warning, critical
-	Enabled     bool
+	ID          int    `json:"id"`
+	ChannelID   int    `json:"channel_id"`
+	Event       string `json:"event"`
+	MinSeverity string `json:"min_severity"`
+	Enabled     bool   `json:"enabled"`
 }
 
 // Event is the payload dispatched through the notification system.

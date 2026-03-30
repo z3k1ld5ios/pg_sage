@@ -70,6 +70,7 @@ func (m *DatabaseManager) FleetStatus() FleetOverview {
 		Databases: make([]DatabaseStatus, 0, len(m.instances)),
 	}
 
+	anyStopped := false
 	for _, inst := range m.instances {
 		inst.Status.HealthScore = computeHealthScore(inst.Status)
 		inst.Status.DatabaseName = inst.Name
@@ -79,6 +80,9 @@ func (m *DatabaseManager) FleetStatus() FleetOverview {
 			Status: inst.Status,
 		}
 		overview.Databases = append(overview.Databases, ds)
+		if inst.Stopped {
+			anyStopped = true
+		}
 	}
 
 	// Sort by health score ascending (worst first).
@@ -99,6 +103,7 @@ func (m *DatabaseManager) FleetStatus() FleetOverview {
 		overview.Summary.TotalCritical += db.Status.FindingsCritical
 		overview.Summary.TotalActions += db.Status.ActionsTotal
 	}
+	overview.Summary.EmergencyStopped = anyStopped
 
 	return overview
 }
@@ -195,6 +200,21 @@ func (m *DatabaseManager) PoolForDatabase(
 	return nil
 }
 
+// AllPools returns the connection pools for all connected
+// instances. Used for operations that must search across
+// all databases (e.g. finding detail, suppress/unsuppress).
+func (m *DatabaseManager) AllPools() []*pgxpool.Pool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var pools []*pgxpool.Pool
+	for _, inst := range m.instances {
+		if inst.Pool != nil {
+			pools = append(pools, inst.Pool)
+		}
+	}
+	return pools
+}
+
 // RemoveInstance removes an instance by name and closes its pool.
 func (m *DatabaseManager) RemoveInstance(name string) bool {
 	m.mu.Lock()
@@ -211,6 +231,21 @@ func (m *DatabaseManager) RemoveInstance(name string) bool {
 	}
 	delete(m.instances, name)
 	return true
+}
+
+// GetInstanceByDatabaseID returns the instance with the given
+// sage.databases ID, or nil if not found.
+func (m *DatabaseManager) GetInstanceByDatabaseID(
+	id int,
+) *DatabaseInstance {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, inst := range m.instances {
+		if inst.DatabaseID == id {
+			return inst
+		}
+	}
+	return nil
 }
 
 // InstanceCount returns the number of registered instances.

@@ -1,0 +1,124 @@
+mode: fleet
+api_listen: "0.0.0.0:8080"
+
+databases:
+  - name: testdb
+    host: pg-target
+    port: 5432
+    user: postgres
+    password: test
+    database: testdb
+    sslmode: disable
+  - name: testdb2
+    host: pg-target-2
+    port: 5432
+    user: postgres
+    password: test
+    database: testdb2
+    sslmode: disable
+
+collector:
+  interval_seconds: 5
+  batch_size: 1000
+  max_queries: 500
+
+analyzer:
+  interval_seconds: 10
+  slow_query_threshold_ms: 50
+  seq_scan_min_rows: 1000
+  unused_index_window_days: 0
+  index_bloat_threshold_pct: 5
+  table_bloat_dead_tuple_pct: 5
+  table_bloat_min_rows: 100
+  idle_in_transaction_timeout_minutes: 1
+  cache_hit_ratio_warning: 0.99
+  regression_threshold_pct: 20
+  regression_lookback_days: 1
+  checkpoint_frequency_warning_per_hour: 1
+
+safety:
+  cpu_ceiling_pct: 95
+  backoff_consecutive_skips: 2
+  dormant_interval_seconds: 10
+  query_timeout_ms: 2000
+  lock_timeout_ms: 5000
+
+trust:
+  level: advisory
+  tier3_safe: true
+  tier3_moderate: true
+  tier3_high_risk: false
+  maintenance_window: "* * * * *"
+  rollback_window_minutes: 2
+  rollback_cooldown_days: 0
+  cascade_cooldown_cycles: 1
+
+executor:
+  mode: auto
+
+llm:
+  enabled: true
+  endpoint: "https://generativelanguage.googleapis.com/v1beta/openai"
+  api_key: ${SAGE_LLM_API_KEY}
+  model: "gemini-2.5-flash"
+  timeout_seconds: 30
+  token_budget_daily: 1000000
+  context_budget_tokens: 8192
+  cooldown_seconds: 10
+
+  optimizer:
+    enabled: true
+    min_query_calls: 5
+    max_indexes_per_table: 10
+    max_new_per_table: 3
+    min_snapshots: 2
+    confidence_threshold: 0.3
+    hypopg_min_improvement_pct: 5.0
+    write_impact_threshold_pct: 30.0
+
+advisor:
+  enabled: true
+  interval_seconds: 15
+  vacuum_enabled: true
+  wal_enabled: true
+  connection_enabled: true
+  memory_enabled: true
+  rewrite_enabled: true
+  bloat_enabled: true
+
+tuner:
+  enabled: true
+  llm_enabled: true
+  work_mem_max_mb: 512
+  plan_time_ratio: 2.0
+  nested_loop_row_threshold: 1000
+  parallel_min_table_rows: 10000
+  min_query_calls: 5
+
+forecaster:
+  enabled: true
+  lookback_days: 1
+  disk_warn_growth_gb_day: 0.001
+  connection_warn_pct: 50
+  cache_warn_threshold: 0.99
+  sequence_warn_days: 365
+  sequence_critical_days: 180
+
+briefing:
+  schedule: "*/2 * * * *"
+
+retention:
+  snapshots_days: 1
+  findings_days: 1
+  actions_days: 1
+  explains_days: 1
+
+auth:
+  admin_email: "admin@test.com"
+  admin_password: "testpassword123"
+
+prometheus:
+  listen_addr: "0.0.0.0:9187"
+
+api:
+  listen_addr: "0.0.0.0:8080"

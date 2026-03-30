@@ -120,11 +120,11 @@ export function Layout({
   )
   const pendingCount = countData?.count || 0
 
-  const { data: globalCfg } = useAPI(
-    user ? '/api/v1/config/global' : null, 15000,
+  const { data: fleetData } = useAPI(
+    user ? '/api/v1/databases' : null, 10000,
   )
   const emergencyStopped =
-    globalCfg?.config?.emergency_stop?.value === 'true'
+    fleetData?.summary?.emergency_stopped === true
 
   const isAdmin = user?.role === 'admin'
 

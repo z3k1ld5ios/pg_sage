@@ -277,6 +277,10 @@ After any test run, report in this exact format:
 
 No test session is complete without this report. "All tests pass" is never an acceptable summary.
 
+### Coverage Gaps Are Mandatory Output
+
+After every test run, you MUST report per-package coverage gaps — packages below the threshold (70% for business logic, 50% for utilities). Run `go test -cover -count=1 ./...` and parse the coverage output. If any package is below threshold, list it with the missing test areas. If all packages meet thresholds, explicitly state "All packages meet coverage thresholds" with the actual numbers. Never omit this section.
+
 ## Code Style & Conventions
 
 - **Go version:** 1.24 (use range-over-func, slog, etc.)

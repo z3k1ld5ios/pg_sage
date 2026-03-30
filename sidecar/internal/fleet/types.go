@@ -14,9 +14,10 @@ import (
 
 // DatabaseInstance holds the runtime state for a single managed database.
 type DatabaseInstance struct {
-	Name      string
-	Config    config.DatabaseConfig
-	Pool      *pgxpool.Pool
+	Name       string
+	DatabaseID int
+	Config     config.DatabaseConfig
+	Pool       *pgxpool.Pool
 	Collector *collector.Collector
 	Analyzer  *analyzer.Analyzer
 	Executor  *executor.Executor
@@ -56,12 +57,13 @@ type FleetOverview struct {
 
 // FleetSummary aggregates fleet-wide metrics.
 type FleetSummary struct {
-	TotalDatabases int `json:"total_databases"`
-	Healthy        int `json:"healthy"`
-	Degraded       int `json:"degraded"`
-	TotalFindings  int `json:"total_findings"`
-	TotalCritical  int `json:"total_critical"`
-	TotalActions   int `json:"total_actions"`
+	TotalDatabases   int  `json:"total_databases"`
+	Healthy          int  `json:"healthy"`
+	Degraded         int  `json:"degraded"`
+	TotalFindings    int  `json:"total_findings"`
+	TotalCritical    int  `json:"total_critical"`
+	TotalActions     int  `json:"total_actions"`
+	EmergencyStopped bool `json:"emergency_stopped"`
 }
 
 // DatabaseStatus pairs a database name with its status.

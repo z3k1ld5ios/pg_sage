@@ -353,7 +353,7 @@ func ruleMissingFKIndexes(
 			Detail:         detail,
 			Recommendation: rec,
 			RecommendedSQL: createSQL,
-			ActionRisk:     "moderate",
+			ActionRisk:     "safe",
 		})
 	}
 	return findings

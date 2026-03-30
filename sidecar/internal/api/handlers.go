@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -66,17 +67,16 @@ func findingDetailHandler(
 			jsonError(w, "missing finding id", http.StatusBadRequest)
 			return
 		}
-		pool := mgr.PoolForDatabase("all")
-		if pool == nil {
-			jsonError(w, "finding not found", http.StatusNotFound)
-			return
+		for _, pool := range mgr.AllPools() {
+			finding, err := queryFindingByID(
+				r.Context(), pool, id,
+			)
+			if err == nil {
+				jsonResponse(w, finding)
+				return
+			}
 		}
-		finding, err := queryFindingByID(r.Context(), pool, id)
-		if err != nil {
-			jsonError(w, "finding not found", http.StatusNotFound)
-			return
-		}
-		jsonResponse(w, finding)
+		jsonError(w, "finding not found", http.StatusNotFound)
 	}
 }
 
@@ -86,26 +86,41 @@ func suppressHandler(
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if id == "" {
-			jsonError(w, "missing finding id", http.StatusBadRequest)
+			jsonError(w, "missing finding id",
+				http.StatusBadRequest)
 			return
 		}
-		pool := mgr.PoolForDatabase("all")
-		if pool == nil {
+		pools := mgr.AllPools()
+		if len(pools) == 0 {
 			jsonResponse(w, map[string]string{
 				"id": id, "status": "suppressed",
 			})
 			return
 		}
-		err := updateFindingStatus(
-			r.Context(), pool, id, "open", "suppressed",
-		)
-		if err != nil {
-			jsonError(w, "finding not found", http.StatusNotFound)
+		connErrors := 0
+		for _, pool := range pools {
+			err := updateFindingStatus(
+				r.Context(), pool, id, "open", "suppressed",
+			)
+			if err == nil {
+				jsonResponse(w, map[string]any{
+					"ok": true, "id": id, "status": "suppressed",
+				})
+				return
+			}
+			if isConnectionError(err) {
+				connErrors++
+			}
+		}
+		if connErrors > 0 {
+			jsonError(w,
+				"database connection error — "+
+					"some databases are unreachable",
+				http.StatusServiceUnavailable)
 			return
 		}
-		jsonResponse(w, map[string]any{
-			"ok": true, "id": id, "status": "suppressed",
-		})
+		jsonError(w, "finding not found",
+			http.StatusNotFound)
 	}
 }
 
@@ -115,26 +130,41 @@ func unsuppressHandler(
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if id == "" {
-			jsonError(w, "missing finding id", http.StatusBadRequest)
+			jsonError(w, "missing finding id",
+				http.StatusBadRequest)
 			return
 		}
-		pool := mgr.PoolForDatabase("all")
-		if pool == nil {
+		pools := mgr.AllPools()
+		if len(pools) == 0 {
 			jsonResponse(w, map[string]string{
 				"id": id, "status": "open",
 			})
 			return
 		}
-		err := updateFindingStatus(
-			r.Context(), pool, id, "suppressed", "open",
-		)
-		if err != nil {
-			jsonError(w, "finding not found", http.StatusNotFound)
+		connErrors := 0
+		for _, pool := range pools {
+			err := updateFindingStatus(
+				r.Context(), pool, id, "suppressed", "open",
+			)
+			if err == nil {
+				jsonResponse(w, map[string]any{
+					"ok": true, "id": id, "status": "open",
+				})
+				return
+			}
+			if isConnectionError(err) {
+				connErrors++
+			}
+		}
+		if connErrors > 0 {
+			jsonError(w,
+				"database connection error — "+
+					"some databases are unreachable",
+				http.StatusServiceUnavailable)
 			return
 		}
-		jsonResponse(w, map[string]any{
-			"ok": true, "id": id, "status": "open",
-		})
+		jsonError(w, "finding not found",
+			http.StatusNotFound)
 	}
 }
 
@@ -690,12 +720,54 @@ func updateFindingStatus(
 		toStatus, id, fromStatus,
 	)
 	if err != nil {
+		// Unique constraint on (category, object_identifier)
+		// for open findings — an open finding already exists.
+		if strings.Contains(err.Error(), "idx_findings_dedup") {
+			// Delete the stale suppressed finding instead of
+			// unsuppressing it since there's already an active
+			// open finding for the same issue.
+			_, delErr := pool.Exec(ctx,
+				`DELETE FROM sage.findings
+				 WHERE id = $1 AND status = 'suppressed'`, id)
+			if delErr != nil {
+				return fmt.Errorf(
+					"conflict cleanup failed: %w", delErr)
+			}
+			return nil
+		}
 		return fmt.Errorf("update finding status: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("no matching finding")
 	}
 	return nil
+}
+
+// isConnectionError returns true if the error indicates a
+// database connectivity problem rather than a query-level issue.
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	markers := []string{
+		"closed pool",
+		"connection refused",
+		"connection reset",
+		"broken pipe",
+		"no such host",
+		"i/o timeout",
+		"context deadline exceeded",
+		"connection timed out",
+		"pool closed",
+	}
+	lower := strings.ToLower(msg)
+	for _, m := range markers {
+		if strings.Contains(lower, m) {
+			return true
+		}
+	}
+	return false
 }
 
 func queryActions(
