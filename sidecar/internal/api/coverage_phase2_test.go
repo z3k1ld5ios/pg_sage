@@ -3042,7 +3042,7 @@ func TestPhase2_BuildFindingsOrder_AllSortOptions(
 		want  string
 	}{
 		{"severity", "desc", "WHEN 'critical'"},
-		{"severity", "asc", "ASC"},
+		{"severity", "asc", "DESC"}, // least-severe-first → DESC on CASE(1,2,3)
 		{"created_at", "desc", "created_at DESC"},
 		{"last_seen", "asc", "last_seen ASC"},
 		{"category", "desc", "category DESC"},
