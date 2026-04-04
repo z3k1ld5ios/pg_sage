@@ -14,8 +14,8 @@ import (
 func TestPhase2_MigrateConfigSchema_FullRun(t *testing.T) {
 	pool, ctx := requireDB(t)
 
-	// Release any held locks, then bootstrap to ensure schema exists.
-	_, _ = pool.Exec(ctx, "SELECT pg_advisory_unlock_all()")
+	// Acquire lock before dropping schema to prevent cross-package races.
+	_, _ = pool.Exec(ctx, "SELECT pg_advisory_lock(hashtext('pg_sage'))")
 	_, _ = pool.Exec(ctx, "DROP SCHEMA IF EXISTS sage CASCADE")
 	if err := Bootstrap(ctx, pool); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
@@ -70,9 +70,7 @@ func TestPhase2_MigrateConfigSchema_Idempotent(t *testing.T) {
 
 	// Ensure schema exists.
 	_, _ = pool.Exec(ctx, "SELECT pg_advisory_unlock_all()")
-	if err := Bootstrap(ctx, pool); err != nil {
-		t.Fatalf("Bootstrap: %v", err)
-	}
+	bootstrapWithRetry(t, ctx, pool)
 	ReleaseAdvisoryLock(ctx, pool)
 
 	// Run MigrateConfigSchema twice — second run should not error.
@@ -89,9 +87,7 @@ func TestPhase2_MigrateConfigSchema_CompositeIndex(t *testing.T) {
 
 	// Ensure schema + migration have run.
 	_, _ = pool.Exec(ctx, "SELECT pg_advisory_unlock_all()")
-	if err := Bootstrap(ctx, pool); err != nil {
-		t.Fatalf("Bootstrap: %v", err)
-	}
+	bootstrapWithRetry(t, ctx, pool)
 	ReleaseAdvisoryLock(ctx, pool)
 
 	if err := MigrateConfigSchema(ctx, pool); err != nil {
@@ -122,9 +118,7 @@ func TestPhase2_EnsureDatabasesTable_Creates(t *testing.T) {
 
 	// Ensure sage schema exists but drop databases table.
 	_, _ = pool.Exec(ctx, "SELECT pg_advisory_unlock_all()")
-	if err := Bootstrap(ctx, pool); err != nil {
-		t.Fatalf("Bootstrap: %v", err)
-	}
+	bootstrapWithRetry(t, ctx, pool)
 	ReleaseAdvisoryLock(ctx, pool)
 
 	// Drop the databases table so EnsureDatabasesTable can recreate it.
@@ -149,9 +143,7 @@ func TestPhase2_EnsureDatabasesTable_Idempotent(t *testing.T) {
 	pool, ctx := requireDB(t)
 
 	_, _ = pool.Exec(ctx, "SELECT pg_advisory_unlock_all()")
-	if err := Bootstrap(ctx, pool); err != nil {
-		t.Fatalf("Bootstrap: %v", err)
-	}
+	bootstrapWithRetry(t, ctx, pool)
 	ReleaseAdvisoryLock(ctx, pool)
 
 	// Run twice — second call should not error.
@@ -167,9 +159,7 @@ func TestPhase2_EnsureDatabasesTable_ExpectedColumns(t *testing.T) {
 	pool, ctx := requireDB(t)
 
 	_, _ = pool.Exec(ctx, "SELECT pg_advisory_unlock_all()")
-	if err := Bootstrap(ctx, pool); err != nil {
-		t.Fatalf("Bootstrap: %v", err)
-	}
+	bootstrapWithRetry(t, ctx, pool)
 	ReleaseAdvisoryLock(ctx, pool)
 
 	if err := EnsureDatabasesTable(ctx, pool); err != nil {
@@ -206,8 +196,8 @@ func TestPhase2_EnsureDatabasesTable_ExpectedColumns(t *testing.T) {
 func TestPhase2_EnsureTablesExist_RecreatesMissing(t *testing.T) {
 	pool, ctx := requireDB(t)
 
-	// Start with a full bootstrap.
-	_, _ = pool.Exec(ctx, "SELECT pg_advisory_unlock_all()")
+	// Start with a full bootstrap under advisory lock.
+	_, _ = pool.Exec(ctx, "SELECT pg_advisory_lock(hashtext('pg_sage'))")
 	_, _ = pool.Exec(ctx, "DROP SCHEMA IF EXISTS sage CASCADE")
 	if err := Bootstrap(ctx, pool); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
@@ -240,9 +230,7 @@ func TestPhase2_EnsureTablesExist_AllPresent(t *testing.T) {
 	pool, ctx := requireDB(t)
 
 	_, _ = pool.Exec(ctx, "SELECT pg_advisory_unlock_all()")
-	if err := Bootstrap(ctx, pool); err != nil {
-		t.Fatalf("Bootstrap: %v", err)
-	}
+	bootstrapWithRetry(t, ctx, pool)
 	ReleaseAdvisoryLock(ctx, pool)
 
 	// All tables exist — should succeed without error.
@@ -254,7 +242,8 @@ func TestPhase2_EnsureTablesExist_AllPresent(t *testing.T) {
 func TestPhase2_EnsureTablesExist_RecreatesMultipleMissing(t *testing.T) {
 	pool, ctx := requireDB(t)
 
-	_, _ = pool.Exec(ctx, "SELECT pg_advisory_unlock_all()")
+	// Acquire lock before dropping schema to prevent cross-package races.
+	_, _ = pool.Exec(ctx, "SELECT pg_advisory_lock(hashtext('pg_sage'))")
 	_, _ = pool.Exec(ctx, "DROP SCHEMA IF EXISTS sage CASCADE")
 	if err := Bootstrap(ctx, pool); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
@@ -436,7 +425,8 @@ func TestPhase2_DDLUsersOAuth_HasExpectedElements(t *testing.T) {
 func TestPhase2_Bootstrap_RunsMigrations(t *testing.T) {
 	pool, ctx := requireDB(t)
 
-	_, _ = pool.Exec(ctx, "SELECT pg_advisory_unlock_all()")
+	// Acquire lock before dropping schema to prevent cross-package races.
+	_, _ = pool.Exec(ctx, "SELECT pg_advisory_lock(hashtext('pg_sage'))")
 	_, _ = pool.Exec(ctx, "DROP SCHEMA IF EXISTS sage CASCADE")
 
 	if err := Bootstrap(ctx, pool); err != nil {

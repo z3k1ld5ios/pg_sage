@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pg-sage/sidecar/internal/collector"
@@ -143,6 +144,15 @@ func (o *Optimizer) Analyze(
 		}
 		recs, tokens, rejections, err := o.analyzeTable(ctx, tc)
 		if err != nil {
+			if isBudgetExhausted(err) {
+				o.logFn("WARN",
+					"optimizer: daily token budget exhausted, "+
+						"skipping remaining tables (%s.%s and after)",
+					tc.Schema, tc.Table,
+				)
+				result.BudgetExhausted = true
+				break
+			}
 			o.logFn("optimizer",
 				"table %s.%s: %v", tc.Schema, tc.Table, err,
 			)
@@ -350,6 +360,13 @@ func totalQueryTime(queries []QueryInfo) float64 {
 		total += q.TotalTimeMs
 	}
 	return total
+}
+
+// isBudgetExhausted returns true if the error indicates
+// the daily token budget has been exhausted.
+func isBudgetExhausted(err error) bool {
+	return err != nil &&
+		strings.Contains(err.Error(), "budget exhausted")
 }
 
 // hasOpenIndexFindings checks whether the given table already has open

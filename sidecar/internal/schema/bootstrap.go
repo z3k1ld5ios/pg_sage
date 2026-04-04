@@ -129,20 +129,22 @@ func PersistTrustRampStart(
 }
 
 func acquireAdvisoryLock(ctx context.Context, pool *pgxpool.Pool) error {
-	qctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	// Use blocking pg_advisory_lock with a timeout instead of
+	// pg_try_advisory_lock. This prevents spurious failures when
+	// multiple sidecar instances or test packages start concurrently
+	// — the lock is held only briefly during schema bootstrap, so
+	// waiting up to 30 seconds is acceptable.
+	qctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	var acquired bool
-	err := pool.QueryRow(
+	_, err := pool.Exec(
 		qctx,
-		"SELECT pg_try_advisory_lock(hashtext('pg_sage'))",
-	).Scan(&acquired)
+		"SELECT pg_advisory_lock(hashtext('pg_sage'))",
+	)
 	if err != nil {
-		return fmt.Errorf("advisory lock query failed: %w", err)
-	}
-	if !acquired {
 		return fmt.Errorf(
-			"another pg_sage instance holds the advisory lock",
+			"advisory lock: %w (another pg_sage instance "+
+				"may be bootstrapping)", err,
 		)
 	}
 	return nil
@@ -237,7 +239,7 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 // ---------------------------------------------------------------------------
 
 const fullSchemaDDL = `
-CREATE SCHEMA sage;
+CREATE SCHEMA IF NOT EXISTS sage;
 ` + ddlActionLog + ddlSnapshots + ddlFindings +
 	ddlExplainCache + ddlBriefings + ddlConfig +
 	ddlAlertLog + ddlQueryHints + ddlExplainSourceIdx +

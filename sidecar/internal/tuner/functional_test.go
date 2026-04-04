@@ -943,12 +943,15 @@ func TestFunctional_TickCooldowns_EmptyMap(t *testing.T) {
 // =========================================================================
 
 func TestFunctional_BuildInsertSQL_Format(t *testing.T) {
-	sql := BuildInsertSQL(42, `Set(work_mem "256MB")`)
+	sql := BuildInsertSQL("SELECT * FROM orders", `Set(work_mem "256MB")`)
 	if !strings.Contains(sql, "INSERT INTO hint_plan.hints") {
 		t.Errorf("missing INSERT: %s", sql)
 	}
-	if !strings.Contains(sql, "42") {
-		t.Errorf("missing queryid: %s", sql)
+	if !strings.Contains(sql, "norm_query_string") {
+		t.Errorf("missing norm_query_string column: %s", sql)
+	}
+	if !strings.Contains(sql, "SELECT * FROM orders") {
+		t.Errorf("missing query text: %s", sql)
 	}
 	if !strings.Contains(sql, "ON CONFLICT") {
 		t.Errorf("missing ON CONFLICT: %s", sql)
@@ -959,7 +962,7 @@ func TestFunctional_BuildInsertSQL_Format(t *testing.T) {
 }
 
 func TestFunctional_BuildInsertSQL_QuoteEscaping(t *testing.T) {
-	sql := BuildInsertSQL(1, "it's a hint with 'quotes'")
+	sql := BuildInsertSQL("SELECT 1", "it's a hint with 'quotes'")
 	if strings.Contains(sql, "it's") {
 		t.Errorf("unescaped single quote found: %s", sql)
 	}
@@ -973,12 +976,12 @@ func TestFunctional_BuildInsertSQL_QuoteEscaping(t *testing.T) {
 }
 
 func TestFunctional_BuildDeleteSQL_Format(t *testing.T) {
-	sql := BuildDeleteSQL(99)
+	sql := BuildDeleteSQL("SELECT * FROM orders WHERE id = $1")
 	if !strings.Contains(sql, "DELETE FROM hint_plan.hints") {
 		t.Errorf("missing DELETE: %s", sql)
 	}
-	if !strings.Contains(sql, "99") {
-		t.Errorf("missing queryid: %s", sql)
+	if !strings.Contains(sql, "SELECT * FROM orders WHERE id = $1") {
+		t.Errorf("missing query text: %s", sql)
 	}
 	if !strings.Contains(sql, "application_name = ''") {
 		t.Errorf("missing application_name filter: %s", sql)

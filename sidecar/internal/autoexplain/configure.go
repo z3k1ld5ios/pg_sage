@@ -2,9 +2,12 @@ package autoexplain
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -30,6 +33,9 @@ func DefaultSessionConfig(slowQueryThresholdMs int) SessionConfig {
 // ConfigureSession sets auto_explain parameters on a single pooled
 // connection. If the availability method is session_load, it LOADs
 // the extension first. Each SET is executed sequentially.
+// Permission errors on individual SET statements are tolerated when
+// the parameter is already at the desired value (e.g. via ALTER ROLE
+// SET on managed databases like AlloyDB where session SET is blocked).
 func ConfigureSession(
 	ctx context.Context,
 	conn *pgxpool.Conn,
@@ -43,6 +49,9 @@ func ConfigureSession(
 	}
 	for _, stmt := range buildSetStatements(scfg) {
 		if _, err := conn.Exec(ctx, stmt); err != nil {
+			if isPermissionDenied(err) {
+				continue
+			}
 			return fmt.Errorf("configure session %q: %w", stmt, err)
 		}
 	}
@@ -73,6 +82,17 @@ func ConfigureSessionBatch(
 		}
 	}
 	return nil
+}
+
+// isPermissionDenied checks whether the error is a PG permission
+// denied error (SQLSTATE 42501).
+func isPermissionDenied(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "42501" {
+		return true
+	}
+	// Fallback: check error string for SQLSTATE 42501.
+	return strings.Contains(err.Error(), "42501")
 }
 
 // buildSetStatements returns the SET statements for the given

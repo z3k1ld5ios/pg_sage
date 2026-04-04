@@ -726,8 +726,21 @@ func TestCoverage_ActionStore_HasPendingForFinding(t *testing.T) {
 // ConfigStore DB integration tests
 // ---------------------------------------------------------------------------
 
-func TestCoverage_ConfigStore_SetAndGetOverrides(t *testing.T) {
+// coverageDBWithUser wraps coverageDB and ensures user 99 exists.
+// Schema tests running in parallel may drop/recreate the sage schema,
+// which removes the test user inserted during sync.Once setup.
+func coverageDBWithUser(t *testing.T) (*pgxpool.Pool, context.Context) {
+	t.Helper()
 	pool, ctx := coverageDB(t)
+	_, _ = pool.Exec(ctx, `
+		INSERT INTO sage.users (id, email, password, role)
+		VALUES (99, 'coverage@test.com', 'hashed', 'admin')
+		ON CONFLICT (id) DO NOTHING`)
+	return pool, ctx
+}
+
+func TestCoverage_ConfigStore_SetAndGetOverrides(t *testing.T) {
+	pool, ctx := coverageDBWithUser(t)
 	cs := NewConfigStore(pool)
 
 	err := cs.SetOverride(ctx,
@@ -759,7 +772,7 @@ func TestCoverage_ConfigStore_SetAndGetOverrides(t *testing.T) {
 }
 
 func TestCoverage_ConfigStore_GetOverridesAllDatabases(t *testing.T) {
-	pool, ctx := coverageDB(t)
+	pool, ctx := coverageDBWithUser(t)
 	cs := NewConfigStore(pool)
 
 	// Set a global override.
@@ -789,7 +802,7 @@ func TestCoverage_ConfigStore_GetOverridesAllDatabases(t *testing.T) {
 }
 
 func TestCoverage_ConfigStore_PerDBOverride(t *testing.T) {
-	pool, ctx := coverageDB(t)
+	pool, ctx := coverageDBWithUser(t)
 	cs := NewConfigStore(pool)
 
 	err := cs.SetOverride(ctx,
@@ -817,7 +830,7 @@ func TestCoverage_ConfigStore_PerDBOverride(t *testing.T) {
 }
 
 func TestCoverage_ConfigStore_DeleteOverride(t *testing.T) {
-	pool, ctx := coverageDB(t)
+	pool, ctx := coverageDBWithUser(t)
 	cs := NewConfigStore(pool)
 
 	cs.SetOverride(ctx,
@@ -837,7 +850,7 @@ func TestCoverage_ConfigStore_DeleteOverride(t *testing.T) {
 }
 
 func TestCoverage_ConfigStore_DeleteOverridePerDB(t *testing.T) {
-	pool, ctx := coverageDB(t)
+	pool, ctx := coverageDBWithUser(t)
 	cs := NewConfigStore(pool)
 
 	cs.SetOverride(ctx,
@@ -850,7 +863,7 @@ func TestCoverage_ConfigStore_DeleteOverridePerDB(t *testing.T) {
 }
 
 func TestCoverage_ConfigStore_SetOverrideValidation(t *testing.T) {
-	pool, ctx := coverageDB(t)
+	pool, ctx := coverageDBWithUser(t)
 	cs := NewConfigStore(pool)
 
 	// Invalid key.
@@ -875,7 +888,7 @@ func TestCoverage_ConfigStore_SetOverrideValidation(t *testing.T) {
 }
 
 func TestCoverage_ConfigStore_GetMergedConfig(t *testing.T) {
-	pool, ctx := coverageDB(t)
+	pool, ctx := coverageDBWithUser(t)
 	cs := NewConfigStore(pool)
 
 	cfg, err := config.Load(
@@ -925,7 +938,7 @@ func TestCoverage_ConfigStore_GetMergedConfig(t *testing.T) {
 }
 
 func TestCoverage_ConfigStore_GetAuditLog(t *testing.T) {
-	pool, ctx := coverageDB(t)
+	pool, ctx := coverageDBWithUser(t)
 	cs := NewConfigStore(pool)
 
 	cs.SetOverride(ctx,

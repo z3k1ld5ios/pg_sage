@@ -1,0 +1,476 @@
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+	"testing"
+
+	"github.com/pg-sage/sidecar/internal/auth"
+	"github.com/pg-sage/sidecar/internal/config"
+	"github.com/pg-sage/sidecar/internal/store"
+)
+
+// ================================================================
+// Contract tests: replay realistic frontend payloads against the
+// config API handlers. These validate that the backend accepts
+// exactly what the Settings page sends.
+//
+// Background: the UI sends execution_mode alongside other config
+// fields. The backend must silently strip execution_mode (it lives
+// in sage.databases, not sage.config) instead of rejecting the
+// entire payload with "unknown config key".
+// ================================================================
+
+// contractSetup returns a ConfigStore and a valid auth.User whose
+// ID exists in sage.users (satisfying the FK on sage.config).
+// Skips the test if Postgres is unavailable.
+func contractSetup(
+	t *testing.T,
+) (*store.ConfigStore, *auth.User) {
+	t.Helper()
+	pool, ctx := phase2RequireDB(t)
+	phase2CleanTables(t, pool, ctx)
+	userID := phase2EnsureUser(t, pool, ctx)
+	cs := store.NewConfigStore(pool)
+	user := &auth.User{
+		ID:    userID,
+		Email: "phase2@test.com",
+		Role:  auth.RoleAdmin,
+	}
+	return cs, user
+}
+
+// TestGlobalPut_MixedPayload_WithExecutionMode sends the exact
+// payload that the Simple Mode tabs send: valid config fields mixed
+// with execution_mode. The handler must strip execution_mode and
+// persist the remaining valid fields.
+func TestGlobalPut_MixedPayload_WithExecutionMode(
+	t *testing.T,
+) {
+	cs, user := contractSetup(t)
+	cfg := &config.Config{
+		Trust:  config.TrustConfig{Level: "advisory"},
+		Safety: config.SafetyConfig{CPUCeilingPct: 80},
+	}
+	handler := configGlobalPutHandler(cs, cfg, nil)
+
+	body := `{
+		"execution_mode": "auto",
+		"trust.level": "autonomous",
+		"safety.cpu_ceiling_pct": "90"
+	}`
+
+	w := doRequestWithUser(
+		handler, "PUT", "/api/v1/config/global",
+		body, user)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body: %s",
+			w.Code, w.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["status"] != "updated" {
+		t.Errorf("status field: got %q, want 'updated'",
+			resp["status"])
+	}
+
+	// Verify hot-reload applied the valid fields.
+	if cfg.Trust.Level != "autonomous" {
+		t.Errorf("trust.level: got %q, want 'autonomous'",
+			cfg.Trust.Level)
+	}
+	if cfg.Safety.CPUCeilingPct != 90 {
+		t.Errorf("safety.cpu_ceiling_pct: got %d, want 90",
+			cfg.Safety.CPUCeilingPct)
+	}
+}
+
+// TestGlobalPut_AllSimpleModeFields sends the full payload from
+// the Simple Mode "Monitoring" tab: collector, analyzer, trust,
+// safety, and execution_mode. All valid keys must be persisted.
+func TestGlobalPut_AllSimpleModeFields(t *testing.T) {
+	cs, user := contractSetup(t)
+	cfg := &config.Config{
+		Collector: config.CollectorConfig{
+			IntervalSeconds: 60,
+		},
+		Analyzer: config.AnalyzerConfig{
+			SlowQueryThresholdMs:  1000,
+			UnusedIndexWindowDays: 7,
+		},
+		Trust:  config.TrustConfig{Level: "advisory"},
+		Safety: config.SafetyConfig{CPUCeilingPct: 80},
+	}
+	handler := configGlobalPutHandler(cs, cfg, nil)
+
+	body := `{
+		"collector.interval_seconds": "30",
+		"analyzer.slow_query_threshold_ms": "500",
+		"analyzer.unused_index_window_days": "14",
+		"trust.level": "autonomous",
+		"execution_mode": "auto",
+		"safety.cpu_ceiling_pct": "85"
+	}`
+
+	w := doRequestWithUser(
+		handler, "PUT", "/api/v1/config/global",
+		body, user)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body: %s",
+			w.Code, w.Body.String())
+	}
+
+	// Verify every valid field was hot-reloaded.
+	if cfg.Collector.IntervalSeconds != 30 {
+		t.Errorf("collector.interval_seconds: got %d, want 30",
+			cfg.Collector.IntervalSeconds)
+	}
+	if cfg.Analyzer.SlowQueryThresholdMs != 500 {
+		t.Errorf(
+			"analyzer.slow_query_threshold_ms: got %d, want 500",
+			cfg.Analyzer.SlowQueryThresholdMs)
+	}
+	if cfg.Analyzer.UnusedIndexWindowDays != 14 {
+		t.Errorf(
+			"analyzer.unused_index_window_days: got %d, want 14",
+			cfg.Analyzer.UnusedIndexWindowDays)
+	}
+	if cfg.Trust.Level != "autonomous" {
+		t.Errorf("trust.level: got %q, want 'autonomous'",
+			cfg.Trust.Level)
+	}
+	if cfg.Safety.CPUCeilingPct != 85 {
+		t.Errorf("safety.cpu_ceiling_pct: got %d, want 85",
+			cfg.Safety.CPUCeilingPct)
+	}
+}
+
+// TestGlobalPut_AllAdvancedLLMFields sends the full payload from
+// the Advanced Mode "LLM" tab: advisor and optimizer settings.
+// All fields must be persisted and hot-reloaded.
+func TestGlobalPut_AllAdvancedLLMFields(t *testing.T) {
+	cs, user := contractSetup(t)
+	cfg := &config.Config{
+		Advisor: config.AdvisorConfig{
+			Enabled:         false,
+			IntervalSeconds: 300,
+		},
+		LLM: config.LLMConfig{
+			Optimizer: config.OptimizerConfig{
+				Enabled:        false,
+				MinQueryCalls:  10,
+				MaxNewPerTable: 3,
+			},
+		},
+	}
+	handler := configGlobalPutHandler(cs, cfg, nil)
+
+	body := `{
+		"advisor.enabled": "true",
+		"advisor.interval_seconds": "120",
+		"llm.optimizer.enabled": "true",
+		"llm.optimizer.min_query_calls": "5",
+		"llm.optimizer.max_new_per_table": "2"
+	}`
+
+	w := doRequestWithUser(
+		handler, "PUT", "/api/v1/config/global",
+		body, user)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body: %s",
+			w.Code, w.Body.String())
+	}
+
+	// Verify hot-reload applied all LLM/advisor fields.
+	if !cfg.Advisor.Enabled {
+		t.Error("advisor.enabled: got false, want true")
+	}
+	if cfg.Advisor.IntervalSeconds != 120 {
+		t.Errorf("advisor.interval_seconds: got %d, want 120",
+			cfg.Advisor.IntervalSeconds)
+	}
+	if !cfg.LLM.Optimizer.Enabled {
+		t.Error("llm.optimizer.enabled: got false, want true")
+	}
+	if cfg.LLM.Optimizer.MinQueryCalls != 5 {
+		t.Errorf(
+			"llm.optimizer.min_query_calls: got %d, want 5",
+			cfg.LLM.Optimizer.MinQueryCalls)
+	}
+	if cfg.LLM.Optimizer.MaxNewPerTable != 2 {
+		t.Errorf(
+			"llm.optimizer.max_new_per_table: got %d, want 2",
+			cfg.LLM.Optimizer.MaxNewPerTable)
+	}
+}
+
+// TestGlobalPut_EmptyBody verifies that sending {} is a valid
+// no-op (the UI may send empty saves).
+func TestGlobalPut_EmptyBody(t *testing.T) {
+	// No database needed: empty body means zero keys to iterate,
+	// so applyConfigOverrides is never called with any key.
+	cfg := &config.Config{}
+	handler := configGlobalPutHandler(nil, cfg, nil)
+
+	w := doRequest(
+		handler, "PUT", "/api/v1/config/global", "{}")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body: %s",
+			w.Code, w.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["status"] != "updated" {
+		t.Errorf("status field: got %q, want 'updated'",
+			resp["status"])
+	}
+}
+
+// TestGlobalPut_SingleInvalidField verifies that a completely
+// unknown config key returns 400. This differs from execution_mode
+// which is silently stripped before validation.
+func TestGlobalPut_SingleInvalidField(t *testing.T) {
+	cs, user := contractSetup(t)
+	cfg := &config.Config{}
+	handler := configGlobalPutHandler(cs, cfg, nil)
+
+	body := `{"nonexistent.key": "value"}`
+
+	w := doRequestWithUser(
+		handler, "PUT", "/api/v1/config/global",
+		body, user)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400; body: %s",
+			w.Code, w.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["error"] == "" {
+		t.Error("expected a non-empty error message")
+	}
+}
+
+// TestGlobalGet_ContainsAllExpectedKeys fetches the global config
+// and verifies it includes keys from every config section the UI
+// depends on.
+func TestGlobalGet_ContainsAllExpectedKeys(t *testing.T) {
+	cs, _ := contractSetup(t)
+	cfg := &config.Config{
+		Mode: "standalone",
+		Trust: config.TrustConfig{
+			Level: "advisory",
+		},
+	}
+	handler := configGlobalGetHandler(cs, cfg)
+
+	w := doRequest(handler, "GET", "/api/v1/config/global", "")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body: %s",
+			w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Mode      string         `json:"mode"`
+		Databases int            `json:"databases"`
+		Config    map[string]any `json:"config"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if resp.Mode != "standalone" {
+		t.Errorf("mode: got %q, want 'standalone'", resp.Mode)
+	}
+
+	// Every config section the UI relies on must be present.
+	requiredKeys := []string{
+		// Collector
+		"collector.interval_seconds",
+		"collector.batch_size",
+		"collector.max_queries",
+		// Analyzer
+		"analyzer.interval_seconds",
+		"analyzer.slow_query_threshold_ms",
+		"analyzer.unused_index_window_days",
+		// Trust
+		"trust.level",
+		"trust.tier3_safe",
+		"trust.maintenance_window",
+		// Safety
+		"safety.cpu_ceiling_pct",
+		"safety.query_timeout_ms",
+		"safety.ddl_timeout_seconds",
+		"safety.lock_timeout_ms",
+		// LLM
+		"llm.enabled",
+		"llm.endpoint",
+		"llm.model",
+		"llm.optimizer.enabled",
+		"llm.optimizer.min_query_calls",
+		"llm.optimizer.max_new_per_table",
+		// Advisor
+		"advisor.enabled",
+		"advisor.interval_seconds",
+		// Alerting
+		"alerting.enabled",
+		"alerting.slack_webhook_url",
+		"alerting.check_interval_seconds",
+		// Retention
+		"retention.snapshots_days",
+		"retention.findings_days",
+		"retention.actions_days",
+		"retention.explains_days",
+		// execution_mode (injected by handler)
+		"execution_mode",
+	}
+
+	for _, key := range requiredKeys {
+		if _, ok := resp.Config[key]; !ok {
+			t.Errorf("missing expected config key: %s", key)
+		}
+	}
+
+	// Verify execution_mode has the expected shape.
+	em, ok := resp.Config["execution_mode"].(map[string]any)
+	if !ok {
+		t.Fatalf("execution_mode: expected object, got %T",
+			resp.Config["execution_mode"])
+	}
+	if em["value"] != "auto" {
+		t.Errorf("execution_mode.value: got %v, want 'auto'",
+			em["value"])
+	}
+	if em["source"] != "default" {
+		t.Errorf("execution_mode.source: got %v, want 'default'",
+			em["source"])
+	}
+}
+
+// TestGlobalPut_ExecutionModeOnly_StrippedSilently verifies that
+// a payload containing ONLY execution_mode results in 200 (no-op
+// after stripping), not 400.
+func TestGlobalPut_ExecutionModeOnly_StrippedSilently(
+	t *testing.T,
+) {
+	// After stripping execution_mode, body is empty -- no DB
+	// call needed.
+	cfg := &config.Config{}
+	handler := configGlobalPutHandler(nil, cfg, nil)
+
+	body := `{"execution_mode": "auto"}`
+
+	w := doRequest(
+		handler, "PUT", "/api/v1/config/global", body)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body: %s",
+			w.Code, w.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["status"] != "updated" {
+		t.Errorf("status field: got %q, want 'updated'",
+			resp["status"])
+	}
+}
+
+// TestGlobalPut_MixedValidAndInvalid verifies that if the payload
+// contains both valid config keys and one truly invalid key (not
+// execution_mode), the handler returns 400. This ensures we
+// distinguish between execution_mode (silently stripped) and
+// genuinely unknown keys (rejected).
+func TestGlobalPut_MixedValidAndInvalid(t *testing.T) {
+	cs, user := contractSetup(t)
+	cfg := &config.Config{}
+	handler := configGlobalPutHandler(cs, cfg, nil)
+
+	body := `{
+		"trust.level": "autonomous",
+		"bogus.field": "whatever"
+	}`
+
+	w := doRequestWithUser(
+		handler, "PUT", "/api/v1/config/global",
+		body, user)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400; body: %s",
+			w.Code, w.Body.String())
+	}
+}
+
+// TestGlobalPut_RoundTrip_PersistsToStore verifies that values
+// sent via PUT are actually persisted and visible in a subsequent
+// GET.
+func TestGlobalPut_RoundTrip_PersistsToStore(t *testing.T) {
+	cs, user := contractSetup(t)
+	cfg := &config.Config{
+		Collector: config.CollectorConfig{
+			IntervalSeconds: 60,
+		},
+	}
+
+	putHandler := configGlobalPutHandler(cs, cfg, nil)
+	getHandler := configGlobalGetHandler(cs, cfg)
+
+	// PUT a new value.
+	putBody := `{"collector.interval_seconds": "15"}`
+	w := doRequestWithUser(
+		putHandler, "PUT", "/api/v1/config/global",
+		putBody, user)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT status: got %d, want 200; body: %s",
+			w.Code, w.Body.String())
+	}
+
+	// GET should reflect the override.
+	w = doRequest(getHandler, "GET", "/api/v1/config/global", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET status: got %d, want 200; body: %s",
+			w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Config map[string]any `json:"config"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	ci, ok := resp.Config["collector.interval_seconds"]
+	if !ok {
+		t.Fatal("collector.interval_seconds missing from GET")
+	}
+	ciMap, ok := ci.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map, got %T", ci)
+	}
+	// After override, value should be 15 (int via coercion) and
+	// source should be "override".
+	val, _ := ciMap["value"].(float64)
+	if int(val) != 15 {
+		t.Errorf("value: got %v, want 15", ciMap["value"])
+	}
+	if ciMap["source"] != "override" {
+		t.Errorf("source: got %v, want 'override'",
+			ciMap["source"])
+	}
+}

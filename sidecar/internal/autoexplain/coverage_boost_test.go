@@ -2,10 +2,13 @@ package autoexplain
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pg-sage/sidecar/internal/schema"
 )
 
 const testDSN = "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"
@@ -513,6 +516,534 @@ func TestCoverage_Detect_CancelledContext(t *testing.T) {
 	cancel() // cancel immediately
 
 	_, err := Detect(ctx, pool)
+	if err == nil {
+		t.Error("expected error from cancelled context")
+	}
+}
+
+// --- Integration tests requiring sage schema ---
+
+// bootstrapSageSchema ensures the sage schema and tables exist.
+// It skips the test if the schema cannot be created.
+func bootstrapSageSchema(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(
+		context.Background(), 10*time.Second,
+	)
+	defer cancel()
+
+	// Use the schema package to bootstrap.
+	if err := schema.Bootstrap(ctx, pool); err != nil {
+		t.Skipf(
+			"skip: cannot bootstrap sage schema: %v", err,
+		)
+	}
+}
+
+func TestCoverage_StorePlan_Success(t *testing.T) {
+	pool := acquireTestPool(t)
+	bootstrapSageSchema(t, pool)
+	ctx := context.Background()
+
+	cfg := CollectorConfig{
+		CollectIntervalSeconds: 60,
+		MaxPlansPerCycle:       5,
+		LogMinDurationMs:       100,
+	}
+	avail := &Availability{
+		Available: false,
+		Method:    "unavailable",
+	}
+	logFn := func(string, string, ...any) {}
+	c := NewCollector(pool, cfg, avail, logFn)
+
+	planJSON := []byte(`[{
+		"Plan": {"Total Cost": 55.0},
+		"Execution Time": 2.5
+	}]`)
+
+	// Use a distinctive queryID to avoid collisions.
+	queryID := int64(999999901)
+
+	// Clean up before and after.
+	cleanup := func() {
+		_, _ = pool.Exec(ctx,
+			"DELETE FROM sage.explain_cache WHERE queryid = $1",
+			queryID,
+		)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	err := c.storePlan(
+		ctx, queryID, "SELECT 1", planJSON, 55.0, 2.5,
+	)
+	if err != nil {
+		t.Fatalf("storePlan returned error: %v", err)
+	}
+
+	// Verify the row was inserted.
+	var storedQuery string
+	var storedSource string
+	var storedCost float64
+	err = pool.QueryRow(ctx,
+		`SELECT query_text, source, total_cost
+		 FROM sage.explain_cache WHERE queryid = $1
+		 ORDER BY captured_at DESC LIMIT 1`,
+		queryID,
+	).Scan(&storedQuery, &storedSource, &storedCost)
+	if err != nil {
+		t.Fatalf("failed to read back stored plan: %v", err)
+	}
+	if storedQuery != "SELECT 1" {
+		t.Errorf(
+			"query_text = %q, want %q",
+			storedQuery, "SELECT 1",
+		)
+	}
+	if storedSource != "auto_explain" {
+		t.Errorf(
+			"source = %q, want %q",
+			storedSource, "auto_explain",
+		)
+	}
+	if storedCost != 55.0 {
+		t.Errorf("total_cost = %f, want 55.0", storedCost)
+	}
+}
+
+func TestCoverage_StorePlan_CancelledContext(t *testing.T) {
+	pool := acquireTestPool(t)
+	bootstrapSageSchema(t, pool)
+
+	cfg := CollectorConfig{
+		CollectIntervalSeconds: 60,
+		MaxPlansPerCycle:       5,
+		LogMinDurationMs:       100,
+	}
+	avail := &Availability{
+		Available: false,
+		Method:    "unavailable",
+	}
+	logFn := func(string, string, ...any) {}
+	c := NewCollector(pool, cfg, avail, logFn)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := c.storePlan(
+		ctx, 999999902, "SELECT 1",
+		[]byte(`[{"Plan": {"Total Cost": 1.0}}]`), 1.0, 0.0,
+	)
+	if err == nil {
+		t.Error("expected error from cancelled context")
+	}
+}
+
+func TestCoverage_CaptureOnDemand_SimpleSelect(t *testing.T) {
+	pool := acquireTestPool(t)
+	bootstrapSageSchema(t, pool)
+	ctx := context.Background()
+
+	// Detect availability to set up properly.
+	avail, err := Detect(ctx, pool)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+
+	cfg := CollectorConfig{
+		CollectIntervalSeconds: 60,
+		MaxPlansPerCycle:       5,
+		LogMinDurationMs:       100,
+	}
+	logFn := func(string, string, ...any) {}
+	c := NewCollector(pool, cfg, avail, logFn)
+
+	queryID := int64(999999903)
+	cleanup := func() {
+		_, _ = pool.Exec(ctx,
+			"DELETE FROM sage.explain_cache WHERE queryid = $1",
+			queryID,
+		)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	err = c.captureOnDemand(ctx, queryID, "SELECT 1")
+	if err != nil {
+		t.Fatalf("captureOnDemand returned error: %v", err)
+	}
+
+	// Verify the plan was stored.
+	var storedSource string
+	err = pool.QueryRow(ctx,
+		`SELECT source FROM sage.explain_cache
+		 WHERE queryid = $1 LIMIT 1`,
+		queryID,
+	).Scan(&storedSource)
+	if err != nil {
+		t.Fatalf("failed to read stored plan: %v", err)
+	}
+	if storedSource != "auto_explain" {
+		t.Errorf("source = %q, want auto_explain", storedSource)
+	}
+}
+
+func TestCoverage_CaptureOnDemand_CancelledContext(t *testing.T) {
+	pool := acquireTestPool(t)
+
+	cfg := CollectorConfig{
+		CollectIntervalSeconds: 60,
+		MaxPlansPerCycle:       5,
+		LogMinDurationMs:       100,
+	}
+	avail := &Availability{
+		Available: false,
+		Method:    "unavailable",
+	}
+	logFn := func(string, string, ...any) {}
+	c := NewCollector(pool, cfg, avail, logFn)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := c.captureOnDemand(ctx, 999999904, "SELECT 1")
+	if err == nil {
+		t.Error("expected error from cancelled context")
+	}
+	if err != nil && !strings.Contains(
+		err.Error(), "acquire connection",
+	) && !strings.Contains(err.Error(), "cancel") {
+		// Should mention acquire or cancellation.
+		t.Logf("error = %v (acceptable)", err)
+	}
+}
+
+func TestCoverage_CaptureOnDemand_BadSQL(t *testing.T) {
+	pool := acquireTestPool(t)
+	bootstrapSageSchema(t, pool)
+	ctx := context.Background()
+
+	avail, err := Detect(ctx, pool)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+
+	cfg := CollectorConfig{
+		CollectIntervalSeconds: 60,
+		MaxPlansPerCycle:       5,
+		LogMinDurationMs:       100,
+	}
+	logFn := func(string, string, ...any) {}
+	c := NewCollector(pool, cfg, avail, logFn)
+
+	// Attempt to explain invalid SQL - should return an error
+	// from the EXPLAIN step.
+	err = c.captureOnDemand(
+		ctx, 999999905,
+		"SELECT * FROM nonexistent_table_abc123",
+	)
+	if err == nil {
+		t.Error("expected error for invalid SQL")
+	}
+	if err != nil && !strings.Contains(err.Error(), "explain") {
+		t.Errorf(
+			"error should mention 'explain', got: %v", err,
+		)
+	}
+}
+
+func TestCoverage_Collect_WithSageSchema(t *testing.T) {
+	pool := acquireTestPool(t)
+	bootstrapSageSchema(t, pool)
+	ctx := context.Background()
+
+	// Use a very high threshold so no queries match, exercising
+	// the successful query path with zero candidates.
+	cfg := CollectorConfig{
+		CollectIntervalSeconds: 60,
+		MaxPlansPerCycle:       5,
+		LogMinDurationMs:       999999999,
+	}
+	avail := &Availability{
+		Available: false,
+		Method:    "unavailable",
+	}
+	logFn := func(string, string, ...any) {}
+	c := NewCollector(pool, cfg, avail, logFn)
+
+	err := c.Collect(ctx)
+	if err != nil {
+		// pg_stat_statements may not exist, which is fine.
+		t.Logf(
+			"Collect with sage schema returned: %v", err,
+		)
+	}
+}
+
+func TestCoverage_Collect_WithCandidates(t *testing.T) {
+	pool := acquireTestPool(t)
+	bootstrapSageSchema(t, pool)
+	ctx := context.Background()
+
+	// Check pg_stat_statements is available.
+	var extName string
+	err := pool.QueryRow(ctx,
+		"SELECT extname FROM pg_extension "+
+			"WHERE extname='pg_stat_statements'",
+	).Scan(&extName)
+	if err != nil {
+		t.Skip(
+			"skip: pg_stat_statements not available",
+		)
+	}
+
+	// Generate some query load so pg_stat_statements has entries.
+	for i := 0; i < 20; i++ {
+		_, _ = pool.Exec(ctx,
+			"SELECT pg_sleep(0.001)",
+		)
+	}
+
+	avail, detectErr := Detect(ctx, pool)
+	if detectErr != nil {
+		t.Fatalf("Detect: %v", detectErr)
+	}
+
+	// Use a very low threshold to catch our queries.
+	cfg := CollectorConfig{
+		CollectIntervalSeconds: 60,
+		MaxPlansPerCycle:       3,
+		LogMinDurationMs:       0,
+	}
+	var warnings []string
+	logFn := func(level, scope string, args ...any) {
+		warnings = append(
+			warnings, fmt.Sprintf("%s:%s", level, scope),
+		)
+	}
+	c := NewCollector(pool, cfg, avail, logFn)
+
+	err = c.Collect(ctx)
+	// Even if there are per-query errors (logged as warnings),
+	// the overall Collect should succeed.
+	if err != nil {
+		t.Logf(
+			"Collect returned error: %v (may be expected)", err,
+		)
+	}
+	// Warnings from individual captureOnDemand failures are
+	// expected (some queries in pg_stat_statements can't be
+	// explained).
+	t.Logf("warnings during Collect: %d", len(warnings))
+}
+
+func TestCoverage_CaptureOnDemand_WithSessionLoad(t *testing.T) {
+	pool := acquireTestPool(t)
+	bootstrapSageSchema(t, pool)
+	ctx := context.Background()
+
+	// Force session_load availability to exercise the LOAD
+	// branch in captureOnDemand.
+	avail := &Availability{
+		SessionLoad: true,
+		Available:   true,
+		Method:      "session_load",
+	}
+
+	cfg := CollectorConfig{
+		CollectIntervalSeconds: 60,
+		MaxPlansPerCycle:       5,
+		LogMinDurationMs:       100,
+	}
+	logFn := func(string, string, ...any) {}
+	c := NewCollector(pool, cfg, avail, logFn)
+
+	queryID := int64(999999906)
+	cleanup := func() {
+		_, _ = pool.Exec(ctx,
+			"DELETE FROM sage.explain_cache WHERE queryid = $1",
+			queryID,
+		)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	// This exercises the ConfigureSession path with
+	// session_load method.
+	err := c.captureOnDemand(ctx, queryID, "SELECT 1")
+	if err != nil {
+		// May fail if LOAD is not permitted; that's acceptable.
+		t.Logf(
+			"captureOnDemand with session_load: %v", err,
+		)
+	}
+}
+
+func TestCoverage_CaptureOnDemand_WithSharedPreload(t *testing.T) {
+	pool := acquireTestPool(t)
+	bootstrapSageSchema(t, pool)
+	ctx := context.Background()
+
+	// Force shared_preload availability to exercise the
+	// ConfigureSession branch.
+	avail := &Availability{
+		SharedPreload: true,
+		Available:     true,
+		Method:        "shared_preload",
+	}
+
+	cfg := CollectorConfig{
+		CollectIntervalSeconds: 60,
+		MaxPlansPerCycle:       5,
+		LogMinDurationMs:       100,
+	}
+	logFn := func(string, string, ...any) {}
+	c := NewCollector(pool, cfg, avail, logFn)
+
+	queryID := int64(999999907)
+	cleanup := func() {
+		_, _ = pool.Exec(ctx,
+			"DELETE FROM sage.explain_cache WHERE queryid = $1",
+			queryID,
+		)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	err := c.captureOnDemand(ctx, queryID, "SELECT 1")
+	if err != nil {
+		t.Fatalf("captureOnDemand with shared_preload: %v", err)
+	}
+
+	// Verify plan was stored.
+	var count int
+	err = pool.QueryRow(ctx,
+		"SELECT count(*) FROM sage.explain_cache "+
+			"WHERE queryid = $1",
+		queryID,
+	).Scan(&count)
+	if err != nil {
+		t.Fatalf("count query failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 plan stored, got %d", count)
+	}
+}
+
+func TestCoverage_ConfigureSession_SessionLoadMethod(t *testing.T) {
+	pool := acquireTestPool(t)
+	ctx := context.Background()
+
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer conn.Release()
+
+	// Force session_load to exercise the LOAD branch.
+	avail := &Availability{
+		SessionLoad: true,
+		Available:   true,
+		Method:      "session_load",
+	}
+	scfg := DefaultSessionConfig(200)
+
+	err = ConfigureSession(ctx, conn, avail, scfg)
+	// If LOAD succeeds, great. If it fails (permission denied),
+	// the error should mention "load auto_explain".
+	if err != nil {
+		if !strings.Contains(err.Error(), "load auto_explain") {
+			t.Errorf(
+				"unexpected error: %v (expected 'load auto_explain')",
+				err,
+			)
+		}
+	}
+}
+
+func TestCoverage_ConfigureSessionBatch_SessionLoadMethod(
+	t *testing.T,
+) {
+	pool := acquireTestPool(t)
+	ctx := context.Background()
+
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer conn.Release()
+
+	// Force session_load to exercise the LOAD branch in batch.
+	avail := &Availability{
+		SessionLoad: true,
+		Available:   true,
+		Method:      "session_load",
+	}
+	scfg := DefaultSessionConfig(200)
+
+	err = ConfigureSessionBatch(ctx, conn, avail, scfg)
+	if err != nil {
+		// Batch with LOAD may fail; that's ok.
+		t.Logf("ConfigureSessionBatch session_load: %v", err)
+	}
+}
+
+func TestCoverage_Run_CollectErrorLogged(t *testing.T) {
+	pool := acquireTestPool(t)
+
+	cfg := CollectorConfig{
+		CollectIntervalSeconds: 1,
+		MaxPlansPerCycle:       1,
+		LogMinDurationMs:       100,
+	}
+	// Use unavailable so Collect hits the DB query on
+	// sage.explain_cache which may not exist, producing a WARN.
+	avail := &Availability{
+		Available: false,
+		Method:    "unavailable",
+	}
+
+	var warnings []string
+	logFn := func(level, scope string, args ...any) {
+		warnings = append(
+			warnings, fmt.Sprintf("%s:%s", level, scope),
+		)
+	}
+	c := NewCollector(pool, cfg, avail, logFn)
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(), 1200*time.Millisecond,
+	)
+	defer cancel()
+
+	c.Run(ctx)
+
+	// The Run loop should have ticked once and logged a warning
+	// from the failed Collect call (either missing schema or
+	// successful but no candidates).
+	t.Logf("warnings logged during Run: %d", len(warnings))
+}
+
+func TestCoverage_Collect_CancelledContext(t *testing.T) {
+	pool := acquireTestPool(t)
+
+	cfg := CollectorConfig{
+		CollectIntervalSeconds: 60,
+		MaxPlansPerCycle:       5,
+		LogMinDurationMs:       100,
+	}
+	avail := &Availability{
+		Available: false,
+		Method:    "unavailable",
+	}
+	logFn := func(string, string, ...any) {}
+	c := NewCollector(pool, cfg, avail, logFn)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := c.Collect(ctx)
 	if err == nil {
 		t.Error("expected error from cancelled context")
 	}

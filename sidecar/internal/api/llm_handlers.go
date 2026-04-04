@@ -34,3 +34,34 @@ func listModelsHandler(
 		})
 	}
 }
+
+// llmStatusHandler returns the current LLM token budget status
+// for all configured clients (general and optimizer).
+func llmStatusHandler(
+	mgr *llm.Manager,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		if mgr == nil {
+			jsonError(w,
+				"LLM not configured",
+				http.StatusServiceUnavailable)
+			return
+		}
+		status := mgr.TokenStatus()
+
+		// Compute an aggregate exhaustion flag so the UI can
+		// show a single banner when any client is out of budget.
+		anyExhausted := false
+		for _, s := range status {
+			if s.Exhausted {
+				anyExhausted = true
+				break
+			}
+		}
+
+		jsonResponse(w, map[string]any{
+			"clients":       status,
+			"any_exhausted": anyExhausted,
+		})
+	}
+}

@@ -710,6 +710,22 @@ function ModelField({ getVal, setVal, getSource, resetField, help }) {
     setLoadingModels(true)
     setModelError(null)
     try {
+      // Save endpoint + key first so the backend can use them.
+      const llmFields = {}
+      const ep = getVal('llm.endpoint')
+      const key = getVal('llm.api_key')
+      const enabled = getVal('llm.enabled')
+      if (ep) llmFields['llm.endpoint'] = ep
+      if (key) llmFields['llm.api_key'] = key
+      if (enabled !== undefined) llmFields['llm.enabled'] = enabled
+      if (Object.keys(llmFields).length > 0) {
+        await fetch('/api/v1/config/global', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(llmFields),
+        })
+      }
       const res = await fetch('/api/v1/llm/models', {
         credentials: 'include',
       })
@@ -843,22 +859,56 @@ function ModelField({ getVal, setVal, getSource, resetField, help }) {
 
 function LLMTab(props) {
   return (
-    <div>
-      <h3 className="text-sm font-medium mb-3"
-        style={{ color: 'var(--text-secondary)' }}>LLM</h3>
-      <Field label="Enabled" configKey="llm.enabled"
-        type="toggle" {...props} />
-      <Field label="Endpoint URL" configKey="llm.endpoint"
-        type="text" {...props} />
-      <Field label="API Key" configKey="llm.api_key"
-        type="password" {...props} />
-      <ModelField {...props} />
-      <Field label="Timeout (seconds)"
-        configKey="llm.timeout_seconds" {...props} />
-      <Field label="Token Budget (daily)"
-        configKey="llm.token_budget_daily" {...props} />
-      <Field label="Context Budget (tokens)"
-        configKey="llm.context_budget_tokens" {...props} />
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-sm font-medium mb-3"
+          style={{ color: 'var(--text-secondary)' }}>LLM</h3>
+        <Field label="Enabled" configKey="llm.enabled"
+          type="toggle" {...props} />
+        <Field label="Endpoint URL" configKey="llm.endpoint"
+          type="text" {...props} />
+        <Field label="API Key" configKey="llm.api_key"
+          type="password" {...props} />
+        <ModelField {...props} />
+        <Field label="Timeout (seconds)"
+          configKey="llm.timeout_seconds" {...props} />
+        <Field label="Token Budget (daily)"
+          configKey="llm.token_budget_daily" {...props} />
+        <Field label="Context Budget (tokens)"
+          configKey="llm.context_budget_tokens" {...props} />
+      </div>
+      <div>
+        <h3 className="text-sm font-medium mb-3"
+          style={{ color: 'var(--text-secondary)' }}>
+          Advisor
+        </h3>
+        <Field label="Advisor Enabled"
+          configKey="advisor.enabled" type="toggle"
+          help="LLM-powered config and query rewrite advisor"
+          {...props} />
+        <Field label="Advisor Interval (seconds)"
+          configKey="advisor.interval_seconds"
+          help="How often the advisor runs (min 5s)"
+          {...props} />
+      </div>
+      <div>
+        <h3 className="text-sm font-medium mb-3"
+          style={{ color: 'var(--text-secondary)' }}>
+          Index Optimizer
+        </h3>
+        <Field label="Optimizer Enabled"
+          configKey="llm.optimizer.enabled" type="toggle"
+          help="LLM-powered index recommendation engine"
+          {...props} />
+        <Field label="Min Query Calls"
+          configKey="llm.optimizer.min_query_calls"
+          help="Minimum query executions before optimizing"
+          {...props} />
+        <Field label="Max New Indexes Per Table"
+          configKey="llm.optimizer.max_new_per_table"
+          help="Cap on new indexes recommended per table"
+          {...props} />
+      </div>
     </div>
   )
 }

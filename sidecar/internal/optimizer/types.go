@@ -24,6 +24,7 @@ type Result struct {
 	Rejections      int
 	TokensUsed      int
 	PlanSource      string
+	BudgetExhausted bool
 }
 
 // TableContext holds enriched per-table data for the LLM prompt.

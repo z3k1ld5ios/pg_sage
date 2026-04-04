@@ -165,25 +165,23 @@ func TestCoverage_BuildFindingsWhere_AllFilters(t *testing.T) {
 // ================================================================
 
 func TestCoverage_BuildFindingsOrder_SeverityDesc(t *testing.T) {
-	// "desc" = most severe first = critical(1) first → SQL uses ASC
-	// on the CASE values (1 < 2 < 3).
+	// "desc" = most severe first = critical(1) first → CASE ASC.
 	f := fleet.FindingFilters{Sort: "severity", Order: "desc"}
 	order := buildFindingsOrder(f)
 	if !strings.Contains(order, "CASE severity") {
 		t.Errorf("severity sort should use CASE: %q", order)
 	}
 	if !strings.Contains(order, "ASC") {
-		t.Errorf("most-severe-first should use ASC on CASE values: %q", order)
+		t.Errorf("most-severe-first should use ASC on CASE: %q", order)
 	}
 }
 
 func TestCoverage_BuildFindingsOrder_SeverityAsc(t *testing.T) {
-	// "asc" = least severe first = info(3) first → SQL uses DESC
-	// on the CASE values (3 > 2 > 1).
+	// "asc" = least severe first = info(3) first → CASE DESC.
 	f := fleet.FindingFilters{Sort: "severity", Order: "asc"}
 	order := buildFindingsOrder(f)
 	if !strings.Contains(order, "DESC") {
-		t.Errorf("least-severe-first should use DESC on CASE values: %q", order)
+		t.Errorf("least-severe-first should use DESC on CASE: %q", order)
 	}
 }
 
@@ -2386,7 +2384,7 @@ func TestCoverage_NewRouterFull_WithDBDeps(t *testing.T) {
 	})
 
 	dbDeps := &DatabaseDeps{Store: nil}
-	r := NewRouterFull(mgr, cfg, nil, nil, dbDeps)
+	r := NewRouterFull(mgr, cfg, nil, nil, dbDeps, nil)
 
 	// dbDeps.Store is nil, so registerDatabaseRoutes is skipped.
 	// Verify router was created and core routes still work.
@@ -2404,7 +2402,7 @@ func TestCoverage_NewRouterFull_WithDBDeps(t *testing.T) {
 func TestCoverage_NewRouterFull_NilDBDeps(t *testing.T) {
 	cfg := &config.Config{Mode: "fleet"}
 	mgr := fleet.NewManager(cfg)
-	r := NewRouterFull(mgr, cfg, nil, nil, nil)
+	r := NewRouterFull(mgr, cfg, nil, nil, nil, nil)
 
 	// Database managed routes should NOT be registered.
 	req := httptest.NewRequest(
@@ -2420,7 +2418,7 @@ func TestCoverage_NewRouterFull_NilDBDeps(t *testing.T) {
 func TestCoverage_NewRouterFull_NilActions(t *testing.T) {
 	cfg := &config.Config{Mode: "fleet"}
 	mgr := fleet.NewManager(cfg)
-	r := NewRouterFull(mgr, cfg, nil, nil, nil)
+	r := NewRouterFull(mgr, cfg, nil, nil, nil, nil)
 
 	// Pending actions route should NOT be registered.
 	req := httptest.NewRequest(

@@ -18,7 +18,13 @@ func setupPhase2Pool(t *testing.T) *pgxpool.Pool {
 	dsn := "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"
 	ctx := context.Background()
 
-	pool, err := pgxpool.New(ctx, dsn)
+	poolCfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Skipf("skipping: cannot parse DSN: %v", err)
+	}
+	// Single connection so advisory lock stays on the same session.
+	poolCfg.MaxConns = 1
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		t.Skipf("skipping: cannot create pool: %v", err)
 	}
@@ -26,13 +32,24 @@ func setupPhase2Pool(t *testing.T) *pgxpool.Pool {
 		pool.Close()
 		t.Skipf("skipping: database unavailable: %v", err)
 	}
-	t.Cleanup(func() { pool.Close() })
 
-	// Bootstrap schema and tables inside an advisory lock to prevent
-	// races when tests run in parallel with other test files.
+	// Hold the pg_sage advisory lock for the entire test to prevent
+	// schema tests from dropping the sage schema mid-test.
+	_, err = pool.Exec(ctx,
+		"SELECT pg_advisory_lock(hashtext('pg_sage'))")
+	if err != nil {
+		pool.Close()
+		t.Fatalf("acquiring advisory lock: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			"SELECT pg_advisory_unlock(hashtext('pg_sage'))")
+		pool.Close()
+	})
+
+	// Bootstrap schema and tables.
 	_, err = pool.Exec(ctx, `
-		SELECT pg_advisory_lock(hashtext('sage_test_bootstrap'));
-
 		CREATE SCHEMA IF NOT EXISTS sage;
 
 		CREATE TABLE IF NOT EXISTS sage.users (
@@ -55,8 +72,6 @@ func setupPhase2Pool(t *testing.T) *pgxpool.Pool {
 			ADD COLUMN IF NOT EXISTS oauth_provider TEXT DEFAULT '';
 		ALTER TABLE sage.users
 			ALTER COLUMN password DROP NOT NULL;
-
-		SELECT pg_advisory_unlock(hashtext('sage_test_bootstrap'));
 	`)
 	if err != nil {
 		t.Fatalf("bootstrap DDL failed: %v", err)
@@ -1106,7 +1121,8 @@ func TestPhase2_FullWorkflow_BootstrapAuthSession(t *testing.T) {
 	pool := setupPhase2Pool(t)
 	ctx := context.Background()
 
-	// 1. Bootstrap admin.
+	// 1. Bootstrap admin (re-truncate to guard against running sidecar).
+	_, _ = pool.Exec(ctx, "TRUNCATE sage.users CASCADE")
 	err := BootstrapAdmin(ctx, pool, "admin@corp.com", "s3cret")
 	if err != nil {
 		t.Fatalf("BootstrapAdmin: %v", err)

@@ -24,6 +24,12 @@ func configGlobalGetHandler(
 				"loading config: %s", err), 500)
 			return
 		}
+		// execution_mode is per-database in fleet mode
+		// but standalone always uses "auto".
+		merged["execution_mode"] = map[string]any{
+			"value": "auto", "source": "default",
+		}
+
 		jsonResponse(w, map[string]any{
 			"mode":       cfg.Mode,
 			"databases":  len(cfg.Databases),
@@ -48,6 +54,11 @@ func configGlobalPutHandler(
 			jsonError(w, "invalid JSON", http.StatusBadRequest)
 			return
 		}
+
+		// execution_mode lives in sage.databases, not
+		// sage.config — strip it so it doesn't cause a
+		// validation error that blocks other fields.
+		delete(body, "execution_mode")
 
 		errs := applyConfigOverrides(
 			r.Context(), cs, cfg, body, 0, userID)

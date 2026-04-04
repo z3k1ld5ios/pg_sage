@@ -150,12 +150,15 @@ func TestBuildRationale_Single(t *testing.T) {
 }
 
 func TestBuildInsertSQL(t *testing.T) {
-	sql := BuildInsertSQL(12345, "SET work_mem = '256MB'")
+	sql := BuildInsertSQL("SELECT * FROM foo", "SET work_mem = '256MB'")
 	if sql == "" {
 		t.Fatal("BuildInsertSQL returned empty string")
 	}
-	if !strings.Contains(sql, "12345") {
-		t.Errorf("should contain queryid 12345")
+	if !strings.Contains(sql, "norm_query_string") {
+		t.Errorf("should contain norm_query_string column")
+	}
+	if !strings.Contains(sql, "SELECT * FROM foo") {
+		t.Errorf("should contain query text")
 	}
 	if !strings.Contains(sql, "work_mem") {
 		t.Errorf("should contain hint SQL")
@@ -163,26 +166,40 @@ func TestBuildInsertSQL(t *testing.T) {
 }
 
 func TestBuildInsertSQL_EscapesSingleQuotes(t *testing.T) {
-	sql := BuildInsertSQL(1, "it's a hint")
+	sql := BuildInsertSQL("SELECT 1", "it's a hint")
 	if !strings.Contains(sql, "it''s") {
 		t.Errorf("single quotes not escaped: %s", sql)
 	}
 }
 
+func TestBuildInsertSQL_EscapesQueryTextQuotes(t *testing.T) {
+	sql := BuildInsertSQL("SELECT * FROM t WHERE name = 'foo'", "hint")
+	if !strings.Contains(sql, "name = ''foo''") {
+		t.Errorf("query text quotes not escaped: %s", sql)
+	}
+}
+
+func TestBuildDeleteSQL_EscapesQueryTextQuotes(t *testing.T) {
+	sql := BuildDeleteSQL("SELECT * FROM t WHERE name = 'foo'")
+	if !strings.Contains(sql, "name = ''foo''") {
+		t.Errorf("query text quotes not escaped: %s", sql)
+	}
+}
+
 func TestBuildInsertSQL_OnConflict(t *testing.T) {
-	sql := BuildInsertSQL(1, "hint")
+	sql := BuildInsertSQL("SELECT 1", "hint")
 	if !strings.Contains(sql, "ON CONFLICT") {
 		t.Errorf("should contain ON CONFLICT: %s", sql)
 	}
 }
 
 func TestBuildDeleteSQL(t *testing.T) {
-	sql := BuildDeleteSQL(12345)
+	sql := BuildDeleteSQL("SELECT * FROM foo")
 	if sql == "" {
 		t.Fatal("BuildDeleteSQL returned empty string")
 	}
-	if !strings.Contains(sql, "12345") {
-		t.Errorf("should contain queryid 12345")
+	if !strings.Contains(sql, "SELECT * FROM foo") {
+		t.Errorf("should contain query text")
 	}
 	if !strings.Contains(sql, "DELETE") {
 		t.Errorf("should contain DELETE: %s", sql)
