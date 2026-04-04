@@ -294,3 +294,27 @@ func NewOptimizerClient(
 func (c *Client) TokensUsedToday() int64 {
 	return c.tokensUsedToday.Load()
 }
+
+// TokenBudgetDaily returns the configured daily token budget.
+// Returns 0 if no budget is configured (unlimited).
+func (c *Client) TokenBudgetDaily() int {
+	return c.cfg.TokenBudgetDaily
+}
+
+// IsBudgetExhausted returns true if the daily token budget has
+// been reached. Returns false when no budget is configured.
+func (c *Client) IsBudgetExhausted() bool {
+	if c.cfg.TokenBudgetDaily <= 0 {
+		return false
+	}
+	today := time.Now().YearDay()
+	if today != c.budgetResetDay {
+		return false
+	}
+	return int(c.tokensUsedToday.Load()) >= c.cfg.TokenBudgetDaily
+}
+
+// Model returns the configured model name.
+func (c *Client) Model() string {
+	return c.cfg.Model
+}

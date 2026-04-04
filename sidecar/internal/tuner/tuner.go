@@ -366,9 +366,9 @@ func (t *Tuner) buildFinding(
 	}
 	if t.hintPlan != nil && t.hintPlan.Available && t.hintPlan.HintTableReady {
 		f.RecommendedSQL = BuildInsertSQL(
-			c.QueryID, combinedHint,
+			c.Query, combinedHint,
 		)
-		f.RollbackSQL = BuildDeleteSQL(c.QueryID)
+		f.RollbackSQL = BuildDeleteSQL(c.Query)
 	}
 
 	// Persist to sage.query_hints for the dashboard query-hints page.
@@ -416,25 +416,27 @@ func (t *Tuner) upsertQueryHint(
 }
 
 // BuildInsertSQL generates an INSERT for hint_plan.hints.
-func BuildInsertSQL(queryID int64, hint string) string {
+func BuildInsertSQL(queryText string, hint string) string {
 	escapedHint := strings.ReplaceAll(hint, "'", "''")
+	escapedQuery := strings.ReplaceAll(queryText, "'", "''")
 	return fmt.Sprintf(
 		"INSERT INTO hint_plan.hints "+
-			"(query_id, application_name, hints) "+
-			"VALUES (%d, '', '%s') "+
-			"ON CONFLICT (query_id, application_name) "+
+			"(norm_query_string, application_name, hints) "+
+			"VALUES ('%s', '', '%s') "+
+			"ON CONFLICT (norm_query_string, application_name) "+
 			"DO UPDATE SET hints = EXCLUDED.hints",
-		queryID, escapedHint,
+		escapedQuery, escapedHint,
 	)
 }
 
 // BuildDeleteSQL generates a DELETE for hint_plan.hints.
-func BuildDeleteSQL(queryID int64) string {
+func BuildDeleteSQL(queryText string) string {
+	escapedQuery := strings.ReplaceAll(queryText, "'", "''")
 	return fmt.Sprintf(
 		"DELETE FROM hint_plan.hints "+
-			"WHERE query_id = %d "+
+			"WHERE norm_query_string = '%s' "+
 			"AND application_name = ''",
-		queryID,
+		escapedQuery,
 	)
 }
 

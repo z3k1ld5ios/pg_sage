@@ -12,6 +12,7 @@ import (
 	"github.com/pg-sage/sidecar/internal/config"
 	"github.com/pg-sage/sidecar/internal/executor"
 	"github.com/pg-sage/sidecar/internal/fleet"
+	"github.com/pg-sage/sidecar/internal/llm"
 	"github.com/pg-sage/sidecar/internal/notify"
 	"github.com/pg-sage/sidecar/internal/store"
 )
@@ -48,7 +49,7 @@ func NewRouterWithActions(
 	middlewares ...func(http.Handler) http.Handler,
 ) http.Handler {
 	return NewRouterFull(
-		mgr, cfg, pool, actions, nil, middlewares...)
+		mgr, cfg, pool, actions, nil, nil, middlewares...)
 }
 
 // NewRouterFull creates the API handler with all optional deps.
@@ -58,10 +59,11 @@ func NewRouterFull(
 	pool *pgxpool.Pool,
 	actions *ActionDeps,
 	dbDeps *DatabaseDeps,
+	llmMgr *llm.Manager,
 	middlewares ...func(http.Handler) http.Handler,
 ) http.Handler {
 	apiMux := http.NewServeMux()
-	registerAPIRoutes(apiMux, mgr, cfg)
+	registerAPIRoutes(apiMux, mgr, cfg, llmMgr)
 	if pool != nil {
 		var oauthProvider *auth.OAuthProvider
 		if cfg.OAuth.Enabled {
@@ -123,6 +125,7 @@ func registerAPIRoutes(
 	mux *http.ServeMux,
 	mgr *fleet.DatabaseManager,
 	cfg *config.Config,
+	llmMgr *llm.Manager,
 ) {
 	mux.HandleFunc(
 		"GET /api/v1/databases", databasesHandler(mgr))
@@ -169,6 +172,9 @@ func registerAPIRoutes(
 	mux.HandleFunc(
 		"GET /api/v1/llm/models",
 		listModelsHandler(&cfg.LLM))
+	mux.HandleFunc(
+		"GET /api/v1/llm/status",
+		llmStatusHandler(llmMgr))
 }
 
 func registerAuthRoutes(

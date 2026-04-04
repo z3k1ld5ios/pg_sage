@@ -2,6 +2,7 @@ package llm
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pg-sage/sidecar/internal/config"
 )
@@ -68,5 +69,103 @@ func TestManager_QueryTuning_RoutesToOptimizer(t *testing.T) {
 
 	if got := m.ForPurpose("query_tuning"); got != opt {
 		t.Fatal("expected Optimizer for query_tuning")
+	}
+}
+
+func TestTokenStatus_GeneralOnly(t *testing.T) {
+	gen := testClient("general")
+	gen.budgetResetDay = time.Now().YearDay()
+	gen.tokensUsedToday.Store(500)
+	m := NewManager(gen, nil, false)
+
+	status := m.TokenStatus()
+	if len(status) != 1 {
+		t.Fatalf("expected 1 client status, got %d", len(status))
+	}
+	gs, ok := status["general"]
+	if !ok {
+		t.Fatal("expected 'general' key in status")
+	}
+	if gs.TokensUsed != 500 {
+		t.Errorf("tokens_used = %d, want 500", gs.TokensUsed)
+	}
+	if gs.TokenBudget != 1000 {
+		t.Errorf("token_budget = %d, want 1000", gs.TokenBudget)
+	}
+	if gs.Exhausted {
+		t.Error("budget_exhausted should be false")
+	}
+	if gs.Model != "general" {
+		t.Errorf("model = %q, want %q", gs.Model, "general")
+	}
+}
+
+func TestTokenStatus_DualClient(t *testing.T) {
+	gen := testClient("general")
+	opt := testClient("optimizer")
+	gen.budgetResetDay = time.Now().YearDay()
+	gen.tokensUsedToday.Store(200)
+	opt.budgetResetDay = time.Now().YearDay()
+	opt.tokensUsedToday.Store(1500)
+	m := NewManager(gen, opt, false)
+
+	status := m.TokenStatus()
+	if len(status) != 2 {
+		t.Fatalf("expected 2 client statuses, got %d", len(status))
+	}
+
+	gs := status["general"]
+	if gs.Exhausted {
+		t.Error("general should not be exhausted")
+	}
+
+	os := status["optimizer"]
+	if !os.Exhausted {
+		t.Error("optimizer should be exhausted (1500 >= 1000)")
+	}
+	if os.TokensUsed != 1500 {
+		t.Errorf("optimizer tokens_used = %d, want 1500", os.TokensUsed)
+	}
+}
+
+func TestTokenStatus_ResetTimestamp(t *testing.T) {
+	gen := testClient("general")
+	m := NewManager(gen, nil, false)
+
+	status := m.TokenStatus()
+	gs := status["general"]
+	if gs.ResetTimestamp == "" {
+		t.Error("resets_at should not be empty")
+	}
+	// Parse the timestamp to verify format.
+	parsed, err := time.Parse(time.RFC3339, gs.ResetTimestamp)
+	if err != nil {
+		t.Fatalf("invalid resets_at format: %v", err)
+	}
+	// Should be tomorrow or later.
+	now := time.Now()
+	if parsed.Before(now) {
+		t.Errorf("resets_at %v should be after now %v",
+			parsed, now)
+	}
+}
+
+func TestTokenStatus_ClientDisabled(t *testing.T) {
+	cfg := &config.LLMConfig{
+		Enabled:          false,
+		Endpoint:         "",
+		APIKey:           "",
+		Model:            "disabled-model",
+		TimeoutSeconds:   5,
+		TokenBudgetDaily: 1000,
+		CooldownSeconds:  10,
+	}
+	gen := New(cfg, noopLog)
+	m := NewManager(gen, nil, false)
+
+	status := m.TokenStatus()
+	gs := status["general"]
+	if gs.Enabled {
+		t.Error("enabled should be false for disabled client")
 	}
 }

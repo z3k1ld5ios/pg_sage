@@ -25,6 +25,8 @@ var allowedPrefixes = []string{
 	"SET ",
 	"RESET ",
 	"SELECT ",
+	"INSERT INTO HINT_PLAN.HINTS",
+	"DELETE FROM HINT_PLAN.HINTS",
 }
 
 // ValidateExecutorSQL checks that sql is a single allowed
@@ -51,7 +53,9 @@ func ValidateExecutorSQL(sql string) error {
 		"%w: statement must start with one of the "+
 			"allowed prefixes (CREATE INDEX, DROP INDEX, "+
 			"REINDEX, VACUUM, ANALYZE, ALTER TABLE, "+
-			"ALTER SYSTEM, ALTER DATABASE, SET, RESET, SELECT)",
+			"ALTER SYSTEM, ALTER DATABASE, SET, RESET, "+
+			"SELECT, INSERT INTO hint_plan.hints, "+
+			"DELETE FROM hint_plan.hints)",
 		ErrDisallowedSQL,
 	)
 }

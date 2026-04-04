@@ -22,7 +22,7 @@ func testManagedRouter() http.Handler {
 	mgr := fleet.NewManager(cfg)
 	// dbDeps is nil: handlers that need the store will panic,
 	// but route registration and middleware still work.
-	return NewRouterFull(mgr, cfg, nil, nil, nil)
+	return NewRouterFull(mgr, cfg, nil, nil, nil, nil)
 }
 
 func TestDatabaseManagedRoutes_NoStore(t *testing.T) {

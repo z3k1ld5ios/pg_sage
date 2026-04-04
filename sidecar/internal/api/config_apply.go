@@ -52,6 +52,8 @@ func hotReload(cfg *config.Config, key, value string) {
 		hotReloadSafety(cfg, key, value)
 	case strings.HasPrefix(key, "llm."):
 		hotReloadLLM(cfg, key, value)
+	case strings.HasPrefix(key, "advisor."):
+		hotReloadAdvisor(cfg, key, value)
 	case strings.HasPrefix(key, "alerting."):
 		hotReloadAlerting(cfg, key, value)
 	case strings.HasPrefix(key, "retention."):
@@ -144,6 +146,21 @@ func hotReloadLLM(cfg *config.Config, key, v string) {
 		cfg.LLM.TokenBudgetDaily = atoi(v)
 	case "llm.context_budget_tokens":
 		cfg.LLM.ContextBudgetTokens = atoi(v)
+	case "llm.optimizer.enabled":
+		cfg.LLM.Optimizer.Enabled = v == "true"
+	case "llm.optimizer.min_query_calls":
+		cfg.LLM.Optimizer.MinQueryCalls = atoi(v)
+	case "llm.optimizer.max_new_per_table":
+		cfg.LLM.Optimizer.MaxNewPerTable = atoi(v)
+	}
+}
+
+func hotReloadAdvisor(cfg *config.Config, key, v string) {
+	switch key {
+	case "advisor.enabled":
+		cfg.Advisor.Enabled = v == "true"
+	case "advisor.interval_seconds":
+		cfg.Advisor.IntervalSeconds = atoi(v)
 	}
 }
 

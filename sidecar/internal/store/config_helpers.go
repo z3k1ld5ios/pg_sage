@@ -44,6 +44,11 @@ var allowedConfigKeys = map[string]string{
 	"llm.timeout_seconds":            "int_pos",
 	"llm.token_budget_daily":         "int_pos",
 	"llm.context_budget_tokens":      "int_pos",
+	"advisor.enabled":                "bool",
+	"advisor.interval_seconds":       "int_min5",
+	"llm.optimizer.enabled":          "bool",
+	"llm.optimizer.min_query_calls":  "int_pos",
+	"llm.optimizer.max_new_per_table": "int_pos",
 	"alerting.enabled":               "bool",
 	"alerting.slack_webhook_url":     "string",
 	"alerting.pagerduty_routing_key": "string",
@@ -276,6 +281,7 @@ func configToMap(cfg *config.Config) map[string]any {
 	addTrustFields(m, &cfg.Trust)
 	addSafetyFields(m, &cfg.Safety)
 	addLLMFields(m, &cfg.LLM)
+	addAdvisorFields(m, &cfg.Advisor)
 	addAlertingFields(m, &cfg.Alerting)
 	addRetentionFields(m, &cfg.Retention)
 	return m
@@ -339,6 +345,18 @@ func addLLMFields(m map[string]any, l *config.LLMConfig) {
 		l.TokenBudgetDaily, "yaml")
 	addField(m, "llm.context_budget_tokens",
 		l.ContextBudgetTokens, "yaml")
+	addField(m, "llm.optimizer.enabled",
+		l.Optimizer.Enabled, "yaml")
+	addField(m, "llm.optimizer.min_query_calls",
+		l.Optimizer.MinQueryCalls, "yaml")
+	addField(m, "llm.optimizer.max_new_per_table",
+		l.Optimizer.MaxNewPerTable, "yaml")
+}
+
+func addAdvisorFields(m map[string]any, a *config.AdvisorConfig) {
+	addField(m, "advisor.enabled", a.Enabled, "yaml")
+	addField(m, "advisor.interval_seconds",
+		a.IntervalSeconds, "yaml")
 }
 
 func addAlertingFields(

@@ -51,7 +51,7 @@ const (
 	DefaultLLMEnabled        = false
 	DefaultLLMTimeoutSeconds = 30
 	DefaultLLMTokenBudget    = 500000
-	DefaultLLMContextBudget  = 4096
+	DefaultLLMContextBudget  = 8192
 	DefaultLLMCooldownSeconds = 300
 
 	DefaultIdxOptEnabled           = false
@@ -79,7 +79,7 @@ const (
 	DefaultOptLLMTimeoutSeconds  = 120
 	DefaultOptLLMTokenBudget     = 500000
 	DefaultOptLLMCooldownSeconds = 300
-	DefaultOptLLMMaxOutputTokens = 4096
+	DefaultOptLLMMaxOutputTokens = 8192
 
 	DefaultBriefingSchedule = "0 6 * * *"
 

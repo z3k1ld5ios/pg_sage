@@ -2,6 +2,7 @@ package advisor
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -83,6 +84,7 @@ func (a *Advisor) Analyze(ctx context.Context) ([]analyzer.Finding, error) {
 	}
 
 	var all []analyzer.Finding
+	budgetErrors := 0
 
 	// Group 1: Configuration tuning
 	if a.cfg.Advisor.VacuumEnabled {
@@ -92,6 +94,9 @@ func (a *Advisor) Analyze(ctx context.Context) ([]analyzer.Finding, error) {
 			findings, err := analyzeVacuum(ctx, a.llmMgr, snap, prev, a.cfg, a.logFn)
 			if err != nil {
 				a.logFn("WARN", "advisor: vacuum: %v", err)
+				if isBudgetError(err) {
+					budgetErrors++
+				}
 			} else {
 				all = append(all, findings...)
 			}
@@ -105,6 +110,9 @@ func (a *Advisor) Analyze(ctx context.Context) ([]analyzer.Finding, error) {
 			findings, err := analyzeWAL(ctx, a.llmMgr, snap, prev, a.cfg, a.logFn)
 			if err != nil {
 				a.logFn("WARN", "advisor: wal: %v", err)
+				if isBudgetError(err) {
+					budgetErrors++
+				}
 			} else {
 				all = append(all, findings...)
 			}
@@ -119,6 +127,9 @@ func (a *Advisor) Analyze(ctx context.Context) ([]analyzer.Finding, error) {
 			findings, err := analyzeConnections(ctx, a.llmMgr, snap, a.cfg, a.logFn)
 			if err != nil {
 				a.logFn("WARN", "advisor: connections: %v", err)
+				if isBudgetError(err) {
+					budgetErrors++
+				}
 			} else {
 				all = append(all, findings...)
 			}
@@ -133,6 +144,9 @@ func (a *Advisor) Analyze(ctx context.Context) ([]analyzer.Finding, error) {
 			findings, err := analyzeMemory(ctx, a.llmMgr, snap, a.cfg, a.logFn)
 			if err != nil {
 				a.logFn("WARN", "advisor: memory: %v", err)
+				if isBudgetError(err) {
+					budgetErrors++
+				}
 			} else {
 				all = append(all, findings...)
 			}
@@ -147,6 +161,9 @@ func (a *Advisor) Analyze(ctx context.Context) ([]analyzer.Finding, error) {
 			findings, err := analyzeQueryRewrites(ctx, a.pool, a.llmMgr, snap, a.cfg, a.logFn)
 			if err != nil {
 				a.logFn("WARN", "advisor: rewrites: %v", err)
+				if isBudgetError(err) {
+					budgetErrors++
+				}
 			} else {
 				all = append(all, findings...)
 			}
@@ -160,13 +177,16 @@ func (a *Advisor) Analyze(ctx context.Context) ([]analyzer.Finding, error) {
 			findings, err := analyzeBloat(ctx, a.llmMgr, snap, prev, a.cfg, a.logFn)
 			if err != nil {
 				a.logFn("WARN", "advisor: bloat: %v", err)
+				if isBudgetError(err) {
+					budgetErrors++
+				}
 			} else {
 				all = append(all, findings...)
 			}
 		}
 	}
 
-	// Rewrite findings for cloud platforms (ALTER SYSTEM →
+	// Rewrite findings for cloud platforms (ALTER SYSTEM ->
 	// ALTER DATABASE, filter restart-requiring GUCs).
 	cloudEnv := a.cloudEnv
 	if cloudEnv == "" {
@@ -183,8 +203,22 @@ func (a *Advisor) Analyze(ctx context.Context) ([]analyzer.Finding, error) {
 	a.findings = all
 	a.mu.Unlock()
 
-	a.logFn("INFO", "advisor: produced %d findings", len(all))
+	if budgetErrors > 0 {
+		a.logFn("WARN",
+			"advisor: produced %d findings "+
+				"(%d sub-advisors skipped: daily token budget exhausted)",
+			len(all), budgetErrors)
+	} else {
+		a.logFn("INFO", "advisor: produced %d findings", len(all))
+	}
 	return all, nil
+}
+
+// isBudgetError returns true if the error indicates
+// the daily token budget has been exhausted.
+func isBudgetError(err error) bool {
+	return err != nil &&
+		strings.Contains(err.Error(), "budget exhausted")
 }
 
 func (a *Advisor) LatestFindings() []analyzer.Finding {

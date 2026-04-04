@@ -1211,9 +1211,16 @@ func startAPIServer(rl *RateLimiter) {
 				registerStoreDatabase(metaState, rec)
 			},
 		}
+	} else if pool != nil {
+		// Standalone mode: use the monitored DB pool for managed
+		// database CRUD so the Databases page works.
+		dbDeps = &api.DatabaseDeps{
+			Store: store.NewDatabaseStore(pool, nil),
+		}
 	}
 	router := api.NewRouterFull(
 		fleetMgr, cfg, authPool, actionDeps, dbDeps,
+		llmMgr,
 		api.SessionAuthMiddleware(authPool),
 		func(next http.Handler) http.Handler {
 			return rateLimitMiddleware(rl, next)

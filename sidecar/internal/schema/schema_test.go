@@ -54,6 +54,20 @@ func requireDB(t *testing.T) (*pgxpool.Pool, context.Context) {
 	return testPool, ctx
 }
 
+// bootstrapWithRetry wraps Bootstrap with cleanup. The advisory lock
+// is now blocking (up to 30s), so cross-package contention is handled
+// by PostgreSQL itself. We still release all locks before calling
+// Bootstrap to clear any stale session-level locks from prior tests.
+func bootstrapWithRetry(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	// Clear any stale advisory locks from prior tests on this session.
+	_, _ = pool.Exec(ctx, "SELECT pg_advisory_unlock_all()")
+
+	if err := Bootstrap(ctx, pool); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+}
+
 func TestExpectedTables_AllPresent(t *testing.T) {
 	want := []string{
 		"action_log",
@@ -124,8 +138,8 @@ func TestDDL_ReferenceSageSchema(t *testing.T) {
 }
 
 func TestFullSchemaDDL_ContainsCreateSchema(t *testing.T) {
-	if !strings.Contains(fullSchemaDDL, "CREATE SCHEMA sage") {
-		t.Error("fullSchemaDDL missing CREATE SCHEMA sage")
+	if !strings.Contains(fullSchemaDDL, "CREATE SCHEMA IF NOT EXISTS sage") {
+		t.Error("fullSchemaDDL missing CREATE SCHEMA IF NOT EXISTS sage")
 	}
 }
 
@@ -256,15 +270,15 @@ func TestTrustRampStart_RejectsGarbage(t *testing.T) {
 func TestBootstrap_FreshDatabase(t *testing.T) {
 	pool, ctx := requireDB(t)
 
-	// Release any advisory locks held by this session.
-	_, _ = pool.Exec(ctx, "SELECT pg_advisory_unlock_all()")
+	// Acquire lock before dropping schema to prevent cross-package races.
+	_, _ = pool.Exec(ctx, "SELECT pg_advisory_lock(hashtext('pg_sage'))")
 
 	_, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS sage CASCADE")
 	if err != nil {
 		t.Fatalf("dropping sage schema: %v", err)
 	}
 
-	// Bootstrap should create everything.
+	// Bootstrap should create everything (lock already held).
 	if err := Bootstrap(ctx, pool); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
@@ -306,15 +320,11 @@ func TestBootstrap_Idempotent(t *testing.T) {
 	pool, ctx := requireDB(t)
 
 	// First bootstrap (may already exist from previous test).
-	if err := Bootstrap(ctx, pool); err != nil {
-		t.Fatalf("Bootstrap (first): %v", err)
-	}
+	bootstrapWithRetry(t, ctx, pool)
 	ReleaseAdvisoryLock(ctx, pool)
 
 	// Second bootstrap — should not error.
-	if err := Bootstrap(ctx, pool); err != nil {
-		t.Fatalf("Bootstrap (second): %v", err)
-	}
+	bootstrapWithRetry(t, ctx, pool)
 	ReleaseAdvisoryLock(ctx, pool)
 
 	// PersistTrustRampStart should return a valid time.

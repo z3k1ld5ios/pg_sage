@@ -547,8 +547,9 @@ func buildFindingsOrder(f fleet.FindingFilters) string {
 		dir = "ASC"
 	}
 	if f.Sort == "severity" {
-		// For severity, "desc" means most severe first (critical→warning→info),
-		// which is ASC on the CASE values (critical=1, warning=2, info=3).
+		// CASE maps critical=1, warning=2, info=3.
+		// Invert: "desc" (most severe first) → CASE ASC (1,2,3),
+		//         "asc" (least severe first) → CASE DESC (3,2,1).
 		sevDir := "ASC"
 		if f.Order == "asc" {
 			sevDir = "DESC"

@@ -1,6 +1,9 @@
 package llm
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Manager routes LLM requests to the appropriate client based on purpose.
 type Manager struct {
@@ -42,4 +45,44 @@ func (m *Manager) ChatForPurpose(
 		return m.General.Chat(ctx, system, user, maxTokens)
 	}
 	return resp, tokens, err
+}
+
+// ClientStatus describes the token budget state for one LLM client.
+type ClientStatus struct {
+	Model          string `json:"model"`
+	Enabled        bool   `json:"enabled"`
+	TokensUsed     int64  `json:"tokens_used"`
+	TokenBudget    int    `json:"token_budget"`
+	Exhausted      bool   `json:"budget_exhausted"`
+	CircuitOpen    bool   `json:"circuit_open"`
+	ResetTimestamp string `json:"resets_at"`
+}
+
+// TokenStatus returns the token budget status for all clients.
+func (m *Manager) TokenStatus() map[string]ClientStatus {
+	result := make(map[string]ClientStatus, 2)
+	if m.General != nil {
+		result["general"] = clientStatus(m.General)
+	}
+	if m.Optimizer != nil {
+		result["optimizer"] = clientStatus(m.Optimizer)
+	}
+	return result
+}
+
+func clientStatus(c *Client) ClientStatus {
+	now := time.Now()
+	tomorrow := time.Date(
+		now.Year(), now.Month(), now.Day()+1,
+		0, 0, 0, 0, now.Location(),
+	)
+	return ClientStatus{
+		Model:          c.Model(),
+		Enabled:        c.IsEnabled(),
+		TokensUsed:     c.TokensUsedToday(),
+		TokenBudget:    c.TokenBudgetDaily(),
+		Exhausted:      c.IsBudgetExhausted(),
+		CircuitOpen:    c.IsCircuitOpen(),
+		ResetTimestamp: tomorrow.Format(time.RFC3339),
+	}
 }

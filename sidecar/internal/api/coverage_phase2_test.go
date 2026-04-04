@@ -236,13 +236,12 @@ func TestPhase2_QueryFindings_WithData(t *testing.T) {
 		t.Fatalf("inserting findings: %v", err)
 	}
 
-	// Query open findings only, severity ascending
-	// (CASE maps critical=1, warning=2, info=3 so ASC
-	// puts critical first).
+	// Query open findings, most severe first.
+	// "desc" → CASE ASC → critical(1) before warning(2).
 	f := fleet.FindingFilters{
 		Status: "open",
 		Sort:   "severity",
-		Order:  "asc",
+		Order:  "desc",
 		Limit:  50,
 		Offset: 0,
 	}
@@ -2648,7 +2647,7 @@ func TestPhase2_NewRouterFull_WithPool(t *testing.T) {
 	})
 
 	router := NewRouterFull(
-		mgr, cfg, pool, nil, nil,
+		mgr, cfg, pool, nil, nil, nil,
 		SessionAuthMiddleware(pool))
 	if router == nil {
 		t.Fatal("router should not be nil")
@@ -3042,7 +3041,7 @@ func TestPhase2_BuildFindingsOrder_AllSortOptions(
 		want  string
 	}{
 		{"severity", "desc", "WHEN 'critical'"},
-		{"severity", "asc", "DESC"}, // least-severe-first → DESC on CASE(1,2,3)
+		{"severity", "asc", "DESC"}, // least-severe-first → CASE DESC
 		{"created_at", "desc", "created_at DESC"},
 		{"last_seen", "asc", "last_seen ASC"},
 		{"category", "desc", "category DESC"},
