@@ -1,0 +1,1402 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Autonomous PostgreSQL DBA Agent">
+      
+      
+      
+        <link rel="canonical" href="https://jasonmassie01.github.io/pg_sage/hint-verification/">
+      
+      
+        <link rel="prev" href="../findings/">
+      
+      
+        <link rel="next" href="../security/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Hint Verification - pg_sage</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="blue-grey" data-md-color-accent="teal">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#hint-verification-explain-before-after" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="pg_sage" class="md-header__button md-logo" aria-label="pg_sage" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            pg_sage
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Hint Verification
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="blue-grey" data-md-color-accent="teal"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="blue-grey" data-md-color-accent="teal"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/jasonmassie01/pg_sage" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jasonmassie01/pg_sage
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="pg_sage" class="md-nav__button md-logo" aria-label="pg_sage" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    pg_sage
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/jasonmassie01/pg_sage" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jasonmassie01/pg_sage
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../walkthrough/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Walkthrough
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mcp-sidecar.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP Sidecar
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sql-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SQL Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../findings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Findings Catalog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hint Verification
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hint Verification
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#test-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test Environment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-seq-scan-with-index-indexscantable-index" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Seq Scan With Index &rarr; IndexScan(table index)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-disk-sort-setwork_mem-nmb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Disk Sort &rarr; Set(work_mem "NMB")
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-hash-spill-setwork_mem-nmb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Hash Spill &rarr; Set(work_mem "NMB")
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-bad-nested-loop-hashjoinalias" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Bad Nested Loop &rarr; HashJoin(alias)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-parallel-disabled-setmax_parallel_workers_per_gather-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Parallel Disabled &rarr; Set(max_parallel_workers_per_gather "4")
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-high-plan-time-setplan_cache_mode-force_generic_plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. High Plan Time &rarr; Set(plan_cache_mode "force_generic_plan")
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-sort-limit-create-index-on-sort-columns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Sort + LIMIT &rarr; CREATE INDEX on sort columns
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-temp-spill-aggregation-setwork_mem-nmb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Temp Spill (Aggregation) &rarr; Set(work_mem "NMB")
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-missing-fk-index-create-index" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Missing FK Index &rarr; CREATE INDEX
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-hint_planhints-table-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. hint_plan.hints Table Integration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-merge-join-hint-mergejoinalias" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Merge Join Hint &rarr; MergeJoin(alias)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-combined-hints-multiple-directives-in-one-comment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12. Combined Hints &rarr; Multiple directives in one comment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#test-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test Environment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-seq-scan-with-index-indexscantable-index" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Seq Scan With Index &rarr; IndexScan(table index)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-disk-sort-setwork_mem-nmb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Disk Sort &rarr; Set(work_mem "NMB")
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-hash-spill-setwork_mem-nmb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Hash Spill &rarr; Set(work_mem "NMB")
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-bad-nested-loop-hashjoinalias" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Bad Nested Loop &rarr; HashJoin(alias)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-parallel-disabled-setmax_parallel_workers_per_gather-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Parallel Disabled &rarr; Set(max_parallel_workers_per_gather "4")
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-high-plan-time-setplan_cache_mode-force_generic_plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. High Plan Time &rarr; Set(plan_cache_mode "force_generic_plan")
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-sort-limit-create-index-on-sort-columns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Sort + LIMIT &rarr; CREATE INDEX on sort columns
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-temp-spill-aggregation-setwork_mem-nmb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Temp Spill (Aggregation) &rarr; Set(work_mem "NMB")
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-missing-fk-index-create-index" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Missing FK Index &rarr; CREATE INDEX
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-hint_planhints-table-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. hint_plan.hints Table Integration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-merge-join-hint-mergejoinalias" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Merge Join Hint &rarr; MergeJoin(alias)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-combined-hints-multiple-directives-in-one-comment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12. Combined Hints &rarr; Multiple directives in one comment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="hint-verification-explain-before-after">Hint Verification: EXPLAIN Before &amp; After<a class="headerlink" href="#hint-verification-explain-before-after" title="Permanent link">&para;</a></h1>
+<p>pg_sage's tuner detects query plan symptoms and prescribes <a href="https://github.com/ossc-db/pg_hint_plan">pg_hint_plan</a> directives or DDL fixes. This document shows the <strong>actual EXPLAIN output</strong> before and after each optimization, proving the hints produce the intended plan changes.</p>
+<p>All tests run against PostgreSQL 17 with pg_hint_plan 1.7.1 on a local Docker container. Source: <a href="https://github.com/jasonmassie01/pg_sage/blob/main/sidecar/test/hint_verify/hint_verify_test.go"><code>sidecar/test/hint_verify/hint_verify_test.go</code></a></p>
+<hr />
+<h2 id="test-environment">Test Environment<a class="headerlink" href="#test-environment" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Version</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PostgreSQL</td>
+<td>17</td>
+</tr>
+<tr>
+<td>pg_hint_plan</td>
+<td>1.7.1</td>
+</tr>
+<tr>
+<td>pg_stat_statements</td>
+<td>1.11</td>
+</tr>
+<tr>
+<td>Container defaults</td>
+<td><code>work_mem=4MB</code>, <code>max_parallel_workers_per_gather=0</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Schema:</strong> 10K customers, 100K orders, 5K products, 200K line items, 500K events.</p>
+<hr />
+<h2 id="1-seq-scan-with-index-indexscantable-index">1. Seq Scan With Index &rarr; <code>IndexScan(table index)</code><a class="headerlink" href="#1-seq-scan-with-index-indexscantable-index" title="Permanent link">&para;</a></h2>
+<p><strong>Symptom:</strong> Planner chooses sequential or bitmap scan on a table that has a usable index.</p>
+<p><strong>Hint:</strong> <code>/*+ IndexScan(orders idx_orders_status) */</code></p>
+<details class="example">
+<summary>EXPLAIN output</summary>
+<p><strong>BEFORE</strong> &mdash; Bitmap Heap Scan (planner's default choice):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Bitmap Heap Scan on orders  (cost=282.74..1384.37 rows=25090 width=30)
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  Recheck Cond: (status = &#39;pending&#39;::text)
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  -&gt;  Bitmap Index Scan on idx_orders_status  (cost=0.00..276.47 rows=25090 width=0)
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>        Index Cond: (status = &#39;pending&#39;::text)
+</code></pre></div>
+<p><strong>AFTER</strong> &mdash; Index Scan forced by hint:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Index Scan using idx_orders_status on orders  (cost=0.29..3501.87 rows=25090 width=30)
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  Index Cond: (status = &#39;pending&#39;::text)
+</code></pre></div>
+</details>
+<p><strong>Verdict:</strong> Hint overrides the planner's bitmap strategy and forces a direct index scan.</p>
+<hr />
+<h2 id="2-disk-sort-setwork_mem-nmb">2. Disk Sort &rarr; <code>Set(work_mem "NMB")</code><a class="headerlink" href="#2-disk-sort-setwork_mem-nmb" title="Permanent link">&para;</a></h2>
+<p><strong>Symptom:</strong> Sort spills to disk because <code>work_mem</code> is too low.</p>
+<p><strong>Fix:</strong> Raise <code>work_mem</code> so the sort fits in memory.</p>
+<details class="example">
+<summary>EXPLAIN ANALYZE output</summary>
+<p><strong>BEFORE</strong> &mdash; <code>work_mem=256kB</code>, sort spills 119 MB to disk:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>Sort  (cost=287326.92..288576.92 rows=500000 width=226)
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>      (actual time=5581.664..5631.182 rows=500000 loops=1)
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>  Sort Key: payload
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>  Sort Method: external merge  Disk: 119464kB
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>  Buffers: shared hit=12252 read=3996, temp read=59709 written=60371
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>  -&gt;  Seq Scan on big_events  (cost=0.00..21248.00 rows=500000 width=226)
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>        (actual time=0.004..40.692 rows=500000 loops=1)
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>Execution Time: 5653.086 ms
+</code></pre></div>
+<p><strong>AFTER</strong> &mdash; <code>work_mem=256MB</code>, sort completes in memory:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Sort  (cost=68576.92..69826.92 rows=500000 width=226)
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>      (actual time=4437.704..4500.274 rows=500000 loops=1)
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  Sort Key: payload
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>  Sort Method: quicksort  Memory: 134388kB
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>  Buffers: shared hit=12284 read=3964
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>  -&gt;  Seq Scan on big_events  (cost=0.00..21248.00 rows=500000 width=226)
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>Execution Time: 4515.701 ms
+</code></pre></div>
+</details>
+<p><strong>Verdict:</strong> <code>external merge Disk: 119MB</code> &rarr; <code>quicksort Memory: 131MB</code>. Execution time drops ~20%.</p>
+<hr />
+<h2 id="3-hash-spill-setwork_mem-nmb">3. Hash Spill &rarr; <code>Set(work_mem "NMB")</code><a class="headerlink" href="#3-hash-spill-setwork_mem-nmb" title="Permanent link">&para;</a></h2>
+<p><strong>Symptom:</strong> Hash join uses multiple batches, spilling intermediate results to disk.</p>
+<p><strong>Fix:</strong> Raise <code>work_mem</code> so the hash table fits in a single batch.</p>
+<details class="example">
+<summary>EXPLAIN ANALYZE output</summary>
+<p><strong>BEFORE</strong> &mdash; <code>work_mem=64kB</code>, hash uses 16 batches:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>Hash Join  (cost=1787.57..7248.60 rows=48975 width=8)
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>      (actual time=4.773..43.504 rows=50000 loops=1)
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>  Hash Cond: (l.order_id = o.id)
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  Buffers: shared hit=2062 read=23, temp read=725 written=725
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>  -&gt;  Seq Scan on lineitems l
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>  -&gt;  Hash  (cost=1379.16..1379.16 rows=24833 width=4)
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>        (actual time=4.653..4.654 rows=25000 loops=1)
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>        Buckets: 4096  Batches: 16  Memory Usage: 89kB
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>Execution Time: 44.778 ms
+</code></pre></div>
+<p><strong>AFTER</strong> &mdash; <code>work_mem=128MB</code>, single batch:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Hash Join  (cost=1689.57..5488.60 rows=48975 width=8)
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>      (actual time=3.311..25.876 rows=50000 loops=1)
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>  Hash Cond: (l.order_id = o.id)
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>  Buffers: shared hit=2085
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>  -&gt;  Seq Scan on lineitems l
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>  -&gt;  Hash  (cost=1379.16..1379.16 rows=24833 width=4)
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>        (actual time=3.293..3.295 rows=25000 loops=1)
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>        Buckets: 32768  Batches: 1  Memory Usage: 1135kB
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>Execution Time: 27.199 ms
+</code></pre></div>
+</details>
+<p><strong>Verdict:</strong> <code>Batches: 16</code> &rarr; <code>Batches: 1</code>. No more temp I/O. Execution time drops 40%.</p>
+<hr />
+<h2 id="4-bad-nested-loop-hashjoinalias">4. Bad Nested Loop &rarr; <code>HashJoin(alias)</code><a class="headerlink" href="#4-bad-nested-loop-hashjoinalias" title="Permanent link">&para;</a></h2>
+<p><strong>Symptom:</strong> Planner picks Nested Loop with inaccurate row estimate, causing excessive iterations.</p>
+<p><strong>Hint:</strong> <code>/*+ HashJoin(c o) */</code></p>
+<details class="example">
+<summary>EXPLAIN output</summary>
+<p><strong>BEFORE</strong> &mdash; Nested Loop with Memoize (hash join disabled for baseline):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>Nested Loop  (cost=0.30..7380.60 rows=25000 width=15)
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>  -&gt;  Seq Scan on orders o  (cost=0.00..1788.00 rows=100000 width=10)
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  -&gt;  Memoize  (cost=0.30..0.32 rows=1 width=13)
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>        Cache Key: o.customer_id
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>        -&gt;  Index Scan using customers_pkey on customers c
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>              Index Cond: (id = o.customer_id)
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>              Filter: (region = &#39;east&#39;::text)
+</code></pre></div>
+<p><strong>AFTER</strong> &mdash; Hash Join forced by hint:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>Hash Join  (cost=240.25..2290.86 rows=25000 width=15)
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>  Hash Cond: (o.customer_id = c.id)
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>  -&gt;  Seq Scan on orders o  (cost=0.00..1788.00 rows=100000 width=10)
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>  -&gt;  Hash  (cost=209.00..209.00 rows=2500 width=13)
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>        -&gt;  Seq Scan on customers c
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>              Filter: (region = &#39;east&#39;::text)
+</code></pre></div>
+</details>
+<p><strong>Verdict:</strong> Nested Loop &rarr; Hash Join. Estimated cost drops from 7380 to 2290.</p>
+<hr />
+<h2 id="5-parallel-disabled-setmax_parallel_workers_per_gather-4">5. Parallel Disabled &rarr; <code>Set(max_parallel_workers_per_gather "4")</code><a class="headerlink" href="#5-parallel-disabled-setmax_parallel_workers_per_gather-4" title="Permanent link">&para;</a></h2>
+<p><strong>Symptom:</strong> Large sequential scan runs single-threaded because <code>max_parallel_workers_per_gather=0</code>.</p>
+<p><strong>Fix:</strong> Enable parallel workers.</p>
+<details class="example">
+<summary>EXPLAIN output</summary>
+<p><strong>BEFORE</strong> &mdash; Serial scan:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>Aggregate  (cost=24164.67..24164.68 rows=1 width=8)
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>  -&gt;  Seq Scan on big_events  (cost=0.00..23748.00 rows=166667 width=0)
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>        Filter: (length(payload) &gt; 200)
+</code></pre></div>
+<p><strong>AFTER</strong> &mdash; Parallel with 3 workers:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>Finalize Aggregate  (cost=19802.08..19802.09 rows=1 width=8)
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>  -&gt;  Gather  (cost=19801.76..19802.07 rows=3 width=8)
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>        Workers Planned: 3
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>        -&gt;  Partial Aggregate  (cost=18801.76..18801.77 rows=1 width=8)
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>              -&gt;  Parallel Seq Scan on big_events
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>                    Filter: (length(payload) &gt; 200)
+</code></pre></div>
+</details>
+<p><strong>Verdict:</strong> Serial scan &rarr; Gather with 3 parallel workers. Estimated cost drops 19%.</p>
+<hr />
+<h2 id="6-high-plan-time-setplan_cache_mode-force_generic_plan">6. High Plan Time &rarr; <code>Set(plan_cache_mode "force_generic_plan")</code><a class="headerlink" href="#6-high-plan-time-setplan_cache_mode-force_generic_plan" title="Permanent link">&para;</a></h2>
+<p><strong>Symptom:</strong> Planning time dominates execution time for repeated queries with different parameters.</p>
+<p><strong>Hint:</strong> <code>/*+ Set(plan_cache_mode "force_generic_plan") */</code></p>
+<p>The hint is accepted by pg_hint_plan (confirmed via <code>pg_hint_plan.debug_print</code>). This forces PostgreSQL to reuse a generic plan instead of re-planning for each parameter set.</p>
+<p><strong>Verdict:</strong> Hint accepted. Effect is measurable on prepared statements with high planning overhead.</p>
+<hr />
+<h2 id="7-sort-limit-create-index-on-sort-columns">7. Sort + LIMIT &rarr; CREATE INDEX on sort columns<a class="headerlink" href="#7-sort-limit-create-index-on-sort-columns" title="Permanent link">&para;</a></h2>
+<p><strong>Symptom:</strong> <code>ORDER BY ... LIMIT N</code> forces a full-table sort before returning N rows.</p>
+<p><strong>Fix:</strong> Create a composite index matching the sort order so PostgreSQL can use an ordered index scan.</p>
+<details class="example">
+<summary>EXPLAIN output</summary>
+<p><strong>BEFORE</strong> &mdash; Incremental Sort on 500K rows for 10-row limit:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>Limit  (cost=0.67..2.56 rows=10 width=226)
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>  -&gt;  Incremental Sort  (cost=0.67..94514.97 rows=500000 width=226)
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>        Sort Key: score DESC, created_at
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>        Presorted Key: score
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>        -&gt;  Index Scan Backward using idx_events_score on big_events
+</code></pre></div>
+<p><strong>AFTER</strong> &mdash; Direct index scan, no sort:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>Limit  (cost=0.42..2.03 rows=10 width=227)
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>  -&gt;  Index Scan using idx_events_score_created on big_events
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_events_score_created</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span><span class="k">ON</span><span class="w"> </span><span class="n">big_events</span><span class="w"> </span><span class="p">(</span><span class="n">score</span><span class="w"> </span><span class="k">DESC</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="p">);</span>
+</code></pre></div>
+</details>
+<p><strong>Verdict:</strong> Incremental Sort eliminated. Cost drops from 94K to 2. The composite index serves both the ordering and the limit directly.</p>
+<hr />
+<h2 id="8-temp-spill-aggregation-setwork_mem-nmb">8. Temp Spill (Aggregation) &rarr; <code>Set(work_mem "NMB")</code><a class="headerlink" href="#8-temp-spill-aggregation-setwork_mem-nmb" title="Permanent link">&para;</a></h2>
+<p><strong>Symptom:</strong> <code>GROUP BY</code> with ordered aggregation spills sort data to disk.</p>
+<p><strong>Fix:</strong> Raise <code>work_mem</code> to keep the sort in memory.</p>
+<details class="example">
+<summary>EXPLAIN ANALYZE output</summary>
+<p><strong>BEFORE</strong> &mdash; <code>work_mem=256kB</code>, external merge during aggregation:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>GroupAggregate  (cost=53489.11..276194.03 rows=5 width=38)
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>      (actual time=316.825..762.689 rows=5 loops=1)
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>  Group Key: event_type
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>  Buffers: temp read=41981 written=42609
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>  -&gt;  Incremental Sort
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>        Sort Method: external merge  Average Disk: 22564kB  Peak Disk: 22712kB
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>Execution Time: 779.333 ms
+</code></pre></div>
+<p><strong>AFTER</strong> &mdash; <code>work_mem=512MB</code>, sort in memory:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>GroupAggregate  (cost=68576.92..72326.98 rows=5 width=38)
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>      (actual time=891.582..1073.095 rows=5 loops=1)
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>  Group Key: event_type
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>  Buffers: shared hit=16134 read=114
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>  -&gt;  Sort
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>        Sort Method: quicksort  Memory: 128568kB
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>Execution Time: 1079.225 ms
+</code></pre></div>
+</details>
+<p><strong>Verdict:</strong> <code>external merge Disk: 22MB</code> &rarr; <code>quicksort Memory: 125MB</code>. Temp I/O eliminated entirely (0 temp reads/writes).</p>
+<hr />
+<h2 id="9-missing-fk-index-create-index">9. Missing FK Index &rarr; CREATE INDEX<a class="headerlink" href="#9-missing-fk-index-create-index" title="Permanent link">&para;</a></h2>
+<p><strong>Symptom:</strong> Join on a foreign key column triggers a sequential scan because there is no index.</p>
+<p><strong>Fix:</strong> <code>CREATE INDEX idx_orders_customer ON orders(customer_id)</code></p>
+<details class="example">
+<summary>EXPLAIN ANALYZE output</summary>
+<p><strong>BEFORE</strong> &mdash; Seq Scan on orders for FK lookup:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>Nested Loop  (actual time=0.014..2.756 rows=10 loops=1)
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>  -&gt;  Index Scan using customers_pkey on customers c
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>        Index Cond: (id = 42)
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>  -&gt;  Seq Scan on orders o  (actual time=0.008..2.741 rows=10 loops=1)
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>        Filter: (customer_id = 42)
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>        Rows Removed by Filter: 99990
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>Execution Time: 2.777 ms
+</code></pre></div>
+<p><strong>AFTER</strong> &mdash; Bitmap Index Scan on new index:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>Nested Loop  (actual time=0.020..0.032 rows=10 loops=1)
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>  -&gt;  Index Scan using customers_pkey on customers c
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>        Index Cond: (id = 42)
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>  -&gt;  Bitmap Heap Scan on orders o  (actual time=0.013..0.023 rows=10 loops=1)
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>        Recheck Cond: (customer_id = 42)
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>        -&gt;  Bitmap Index Scan on idx_orders_customer
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>              Index Cond: (customer_id = 42)
+<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>Execution Time: 0.052 ms
+</code></pre></div>
+</details>
+<p><strong>Verdict:</strong> Seq Scan (filtering 99,990 rows) &rarr; Bitmap Index Scan (10 rows directly). <strong>53x faster</strong> (2.78ms &rarr; 0.05ms).</p>
+<hr />
+<h2 id="10-hint_planhints-table-integration">10. hint_plan.hints Table Integration<a class="headerlink" href="#10-hint_planhints-table-integration" title="Permanent link">&para;</a></h2>
+<p>pg_hint_plan 1.7.1 supports table-driven hints via <code>hint_plan.hints</code>, keyed by <code>query_id</code> from <code>pg_stat_statements</code>. This is how pg_sage persists hints without modifying application SQL.</p>
+<details class="example">
+<summary>EXPLAIN output</summary>
+<p><strong>BEFORE</strong> &mdash; No hint in table, planner picks Bitmap:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>Bitmap Heap Scan on orders
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>  Recheck Cond: (status = &#39;shipped&#39;::text)
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>  -&gt;  Bitmap Index Scan on idx_orders_status
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>        Index Cond: (status = &#39;shipped&#39;::text)
+</code></pre></div>
+<p><strong>Hint inserted:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="k">INSERT</span><span class="w"> </span><span class="k">INTO</span><span class="w"> </span><span class="n">hint_plan</span><span class="p">.</span><span class="n">hints</span><span class="w"> </span><span class="p">(</span><span class="n">query_id</span><span class="p">,</span><span class="w"> </span><span class="n">application_name</span><span class="p">,</span><span class="w"> </span><span class="n">hints</span><span class="p">)</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="k">VALUES</span><span class="w"> </span><span class="p">(</span><span class="o">-</span><span class="mi">8629227083328336691</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;IndexScan(orders idx_orders_status)&#39;</span><span class="p">);</span>
+</code></pre></div>
+<p><strong>AFTER</strong> &mdash; Hint applied transparently:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>Index Scan using idx_orders_status on orders
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>  Index Cond: (status = &#39;shipped&#39;::text)
+</code></pre></div>
+</details>
+<p><strong>Verdict:</strong> Table-driven hints work. No application code changes needed &mdash; pg_sage inserts the hint, pg_hint_plan applies it automatically on matching queries.</p>
+<hr />
+<h2 id="11-merge-join-hint-mergejoinalias">11. Merge Join Hint &rarr; <code>MergeJoin(alias)</code><a class="headerlink" href="#11-merge-join-hint-mergejoinalias" title="Permanent link">&para;</a></h2>
+<p><strong>Hint:</strong> <code>/*+ MergeJoin(o l) */</code></p>
+<details class="example">
+<summary>EXPLAIN output</summary>
+<p><strong>BEFORE</strong> &mdash; Hash Join:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>Hash Join  (cost=52.03..3851.05 rows=1897 width=8)
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>  Hash Cond: (l.order_id = o.id)
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a>  -&gt;  Seq Scan on lineitems l
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>  -&gt;  Hash
+<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>        -&gt;  Index Only Scan using orders_pkey on orders o
+<a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a>              Index Cond: (id &lt; 1000)
+</code></pre></div>
+<p><strong>AFTER</strong> &mdash; Merge Join:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>Merge Join  (cost=1.87..9707.16 rows=1897 width=8)
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>  Merge Cond: (o.id = l.order_id)
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>  -&gt;  Index Only Scan using orders_pkey on orders o
+<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>        Index Cond: (id &lt; 1000)
+<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>  -&gt;  Index Scan using idx_li_order on lineitems l
+</code></pre></div>
+</details>
+<p><strong>Verdict:</strong> Hash Join &rarr; Merge Join. Both sides now use ordered index scans.</p>
+<hr />
+<h2 id="12-combined-hints-multiple-directives-in-one-comment">12. Combined Hints &rarr; Multiple directives in one comment<a class="headerlink" href="#12-combined-hints-multiple-directives-in-one-comment" title="Permanent link">&para;</a></h2>
+<p>pg_sage's <code>CombineHints()</code> merges multiple prescriptions into a single hint string. When both a join hint and a work_mem hint apply, they are combined.</p>
+<p><strong>Hint:</strong> <code>/*+ Set(work_mem "128MB") MergeJoin(c o) IndexScan(o) */</code></p>
+<details class="example">
+<summary>EXPLAIN output</summary>
+<p><strong>BEFORE</strong> &mdash; Hash Join with Seq Scans:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>HashAggregate  (cost=2859.61..2959.61 rows=10000 width=17)
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>  -&gt;  Hash Join
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>        Hash Cond: (o.customer_id = c.id)
+<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a>        -&gt;  Seq Scan on orders o
+<a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a>        -&gt;  Hash
+<a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a>              -&gt;  Seq Scan on customers c
+</code></pre></div>
+<p><strong>AFTER</strong> &mdash; Merge Join with Index Scans:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>HashAggregate  (cost=7230.03..7330.03 rows=10000 width=17)
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>  -&gt;  Merge Join
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>        Merge Cond: (c.id = o.customer_id)
+<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a>        -&gt;  Index Scan using customers_pkey on customers c
+<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a>        -&gt;  Index Scan using idx_orders_customer on orders o
+</code></pre></div>
+</details>
+<p><strong>Verdict:</strong> All three hints applied simultaneously: Merge Join forced, both tables use Index Scan, work_mem raised.</p>
+<hr />
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Case</th>
+<th>Symptom</th>
+<th>Fix</th>
+<th>Plan Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Seq Scan w/ Index</td>
+<td>Planner ignores index</td>
+<td><code>IndexScan(t idx)</code></td>
+<td>Bitmap &rarr; Index Scan</td>
+</tr>
+<tr>
+<td>Disk Sort</td>
+<td>Sort spills 119MB</td>
+<td><code>work_mem=256MB</code></td>
+<td>external merge &rarr; quicksort Memory</td>
+</tr>
+<tr>
+<td>Hash Spill</td>
+<td>16 hash batches</td>
+<td><code>work_mem=128MB</code></td>
+<td>Batches: 16 &rarr; 1</td>
+</tr>
+<tr>
+<td>Bad Nested Loop</td>
+<td>NL with bad estimate</td>
+<td><code>HashJoin(c o)</code></td>
+<td>Nested Loop &rarr; Hash Join</td>
+</tr>
+<tr>
+<td>Parallel Off</td>
+<td>Serial scan on 500K rows</td>
+<td><code>max_parallel_workers_per_gather=4</code></td>
+<td>Seq Scan &rarr; Parallel Seq Scan</td>
+</tr>
+<tr>
+<td>High Plan Time</td>
+<td>Re-planning overhead</td>
+<td><code>force_generic_plan</code></td>
+<td>Reuse cached plan</td>
+</tr>
+<tr>
+<td>Sort + LIMIT</td>
+<td>Full sort for 10 rows</td>
+<td>CREATE INDEX (composite)</td>
+<td>Sort eliminated</td>
+</tr>
+<tr>
+<td>Temp Spill</td>
+<td>Aggregation spills 22MB</td>
+<td><code>work_mem=512MB</code></td>
+<td>external merge &rarr; quicksort Memory</td>
+</tr>
+<tr>
+<td>Missing FK Index</td>
+<td>Seq scan on FK join</td>
+<td>CREATE INDEX</td>
+<td>Seq Scan &rarr; Bitmap Index (53x)</td>
+</tr>
+<tr>
+<td>Hint Table</td>
+<td>Transparent hint injection</td>
+<td><code>hint_plan.hints</code> INSERT</td>
+<td>Bitmap &rarr; Index Scan</td>
+</tr>
+<tr>
+<td>Merge Join</td>
+<td>Force join strategy</td>
+<td><code>MergeJoin(o l)</code></td>
+<td>Hash Join &rarr; Merge Join</td>
+</tr>
+<tr>
+<td>Combined Hints</td>
+<td>Multiple symptoms</td>
+<td>Combined hint string</td>
+<td>Hash+Seq &rarr; Merge+Index</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "content.code.copy", "search.highlight"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
