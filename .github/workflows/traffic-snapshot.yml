@@ -1,0 +1,114 @@
+name: Traffic Snapshot
+
+# Daily snapshot of GitHub's 14-day traffic API.
+# GitHub does not retain traffic data beyond 14 days, so we
+# persist it ourselves to an orphan `analytics` branch.
+#
+# Branch layout:
+#   analytics/
+#     data/YYYY-MM-DD/views.json
+#     data/YYYY-MM-DD/clones.json
+#     data/YYYY-MM-DD/referrers.json
+#     data/YYYY-MM-DD/paths.json
+#
+# Query with:
+#   git fetch origin analytics
+#   git show origin/analytics:data/2026-04-07/views.json
+
+on:
+  schedule:
+    # 05:00 UTC every day — well after GitHub's traffic rollup.
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+
+# The traffic API requires `administration: read`; push to the
+# analytics branch requires `contents: write`.
+permissions:
+  contents: write
+  administration: read
+
+concurrency:
+  group: traffic-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Configure git identity
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+      - name: Create analytics branch if missing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if git ls-remote --exit-code --heads origin analytics >/dev/null 2>&1; then
+            echo "analytics branch already exists"
+            exit 0
+          fi
+          echo "bootstrapping orphan analytics branch"
+          git checkout --orphan analytics
+          git rm -rf . >/dev/null 2>&1 || true
+          cat > README.md <<'EOF'
+          # pg_sage traffic analytics
+
+          Daily snapshots of GitHub's 14-day traffic API, persisted
+          here because GitHub itself does not retain traffic data
+          beyond 14 days.
+
+          Layout:
+
+              data/YYYY-MM-DD/views.json
+              data/YYYY-MM-DD/clones.json
+              data/YYYY-MM-DD/referrers.json
+              data/YYYY-MM-DD/paths.json
+
+          Maintained by `.github/workflows/traffic-snapshot.yml`
+          on `master`.
+          EOF
+          git add README.md
+          git commit -m "init analytics branch"
+          git push origin analytics
+
+      - name: Fetch analytics branch
+        run: |
+          git fetch origin analytics
+          git checkout analytics
+
+      - name: Pull traffic data
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          DATE=$(date -u +%Y-%m-%d)
+          mkdir -p "data/$DATE"
+          gh api "repos/$REPO/traffic/views" \
+            > "data/$DATE/views.json"
+          gh api "repos/$REPO/traffic/clones" \
+            > "data/$DATE/clones.json"
+          gh api "repos/$REPO/traffic/popular/referrers" \
+            > "data/$DATE/referrers.json"
+          gh api "repos/$REPO/traffic/popular/paths" \
+            > "data/$DATE/paths.json"
+          echo "snapshot contents:"
+          ls -la "data/$DATE"
+
+      - name: Commit and push snapshot
+        run: |
+          set -euo pipefail
+          DATE=$(date -u +%Y-%m-%d)
+          git add "data/$DATE"
+          if git diff --staged --quiet; then
+            echo "no changes to commit (already snapshotted today)"
+            exit 0
+          fi
+          git commit -m "snapshot: $DATE"
+          git push origin analytics
