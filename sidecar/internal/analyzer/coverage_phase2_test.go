@@ -595,7 +595,7 @@ func TestPhase2_BuildHistoricalAverages_Empty(t *testing.T) {
 
 	avgs := a.buildHistoricalAverages(ctx)
 	// With no snapshots, we get an empty (or nil) map.
-	if avgs != nil && len(avgs) > 0 {
+	if len(avgs) > 0 {
 		// May have pre-existing snapshots from other tests. That's OK.
 		t.Logf("found %d averages (may be from prior test data)", len(avgs))
 	}

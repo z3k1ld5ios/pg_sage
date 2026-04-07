@@ -438,7 +438,7 @@ func detectPGVersion(p *pgxpool.Pool) int {
 	_ = p.QueryRow(
 		context.Background(), "SHOW server_version_num",
 	).Scan(&verStr)
-	fmt.Sscanf(verStr, "%d", &ver)
+	_, _ = fmt.Sscanf(verStr, "%d", &ver)
 	if ver == 0 {
 		ver = 140000
 	}

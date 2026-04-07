@@ -61,7 +61,7 @@ func (s *ConfigStore) SetOverride(
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback(qctx)
+	defer func() { _ = tx.Rollback(qctx) }()
 
 	oldValue, err := getOldValue(qctx, tx, key, databaseID)
 	if err != nil {

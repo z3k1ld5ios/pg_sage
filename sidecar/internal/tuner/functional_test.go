@@ -23,16 +23,6 @@ func noopLogFn(string, string, ...any) {}
 // ptr returns a pointer to the given value.
 func ptr[T any](v T) *T { return &v }
 
-// mustJSON marshals v to JSON, failing the test on error.
-func mustJSON(t *testing.T, v any) []byte {
-	t.Helper()
-	b, err := json.Marshal(v)
-	if err != nil {
-		t.Fatalf("json.Marshal: %v", err)
-	}
-	return b
-}
-
 // assertSymptomPresent checks that at least one symptom of the
 // given kind exists in the slice.
 func assertSymptomPresent(

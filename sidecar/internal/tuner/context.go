@@ -279,7 +279,7 @@ func fetchSystemContext(
 
 func parseIntSetting(s string) int {
 	var v int
-	fmt.Sscanf(s, "%d", &v)
+	_, _ = fmt.Sscanf(s, "%d", &v)
 	return v
 }
 

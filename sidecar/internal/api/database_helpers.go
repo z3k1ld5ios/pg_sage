@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/url"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -17,55 +16,6 @@ type ConnectionTestResult struct {
 	PGVersion  string   `json:"pg_version,omitempty"`
 	Extensions []string `json:"extensions,omitempty"`
 	Error      string   `json:"error,omitempty"`
-}
-
-// testDatabaseConnection attempts to connect to a database
-// and returns diagnostics about PG version and extensions.
-func testDatabaseConnection(
-	ctx context.Context,
-	host string, port int,
-	database, username, password, sslmode string,
-) (*ConnectionTestResult, error) {
-	u := &url.URL{
-		Scheme:   "postgres",
-		User:     url.UserPassword(username, password),
-		Host:     fmt.Sprintf("%s:%d", host, port),
-		Path:     database,
-		RawQuery: url.Values{"sslmode": {sslmode}}.Encode(),
-	}
-	connStr := u.String()
-
-	testCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	conn, err := pgx.Connect(testCtx, connStr)
-	if err != nil {
-		log.Printf("test-connection failed for %s:%d: %v",
-			host, port, err)
-		return &ConnectionTestResult{
-			Status: "error",
-			Error:  "connection failed",
-		}, nil
-	}
-	defer conn.Close(testCtx)
-
-	version, err := queryPGVersion(testCtx, conn)
-	if err != nil {
-		log.Printf("test-connection version query failed "+
-			"for %s:%d: %v", host, port, err)
-		return &ConnectionTestResult{
-			Status: "error",
-			Error:  "version query failed",
-		}, nil
-	}
-
-	extensions := queryExtensions(testCtx, conn)
-
-	return &ConnectionTestResult{
-		Status:     "ok",
-		PGVersion:  version,
-		Extensions: extensions,
-	}, nil
 }
 
 // queryPGVersion runs SELECT version() and extracts

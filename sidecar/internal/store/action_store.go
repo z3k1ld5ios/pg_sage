@@ -67,15 +67,10 @@ func (s *ActionStore) ListPending(
 	qctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	var rows_ interface{ Close() }
-	var err error
-
 	query := listPendingBaseSQL
 	if databaseID != nil {
 		query += " AND database_id = $1"
-		r, e := s.pool.Query(qctx, query, *databaseID)
-		rows_ = r
-		err = e
+		r, err := s.pool.Query(qctx, query, *databaseID)
 		if err != nil {
 			return nil, fmt.Errorf("listing pending actions: %w", err)
 		}
@@ -83,10 +78,7 @@ func (s *ActionStore) ListPending(
 		return scanQueuedActions(r)
 	}
 
-	r, e := s.pool.Query(qctx, query)
-	rows_ = r
-	_ = rows_
-	err = e
+	r, err := s.pool.Query(qctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("listing pending actions: %w", err)
 	}

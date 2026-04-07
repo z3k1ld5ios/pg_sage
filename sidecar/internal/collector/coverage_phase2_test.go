@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"github.com/pg-sage/sidecar/internal/config"
 )
 
 // ---------------------------------------------------------------------------
@@ -18,13 +16,6 @@ import (
 func phase2Collector(t *testing.T, pool *pgxpool.Pool) *Collector {
 	t.Helper()
 	cfg := testConfig()
-	return New(pool, cfg, 170000, noopLog)
-}
-
-func phase2CollectorWithCfg(
-	t *testing.T, pool *pgxpool.Pool, cfg *config.Config,
-) *Collector {
-	t.Helper()
 	return New(pool, cfg, 170000, noopLog)
 }
 

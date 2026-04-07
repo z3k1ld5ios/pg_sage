@@ -318,7 +318,7 @@ func TestSnapshot_OmitEmpty_IOField(t *testing.T) {
 	}
 
 	snap.IO = []IOStats{}
-	data, err = json.Marshal(snap)
+	_, err = json.Marshal(snap)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}

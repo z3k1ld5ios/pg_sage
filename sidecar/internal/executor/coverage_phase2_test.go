@@ -9,8 +9,6 @@ import (
 	"github.com/pg-sage/sidecar/internal/config"
 )
 
-func noopLog(_ string, _ string, _ ...any) {}
-
 // ---------------------------------------------------------------------------
 // connectTestDB helper
 // ---------------------------------------------------------------------------
