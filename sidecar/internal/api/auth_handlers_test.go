@@ -280,7 +280,7 @@ func TestCreateUserHandler_InvalidRole(t *testing.T) {
 	handler := createUserHandler(nil)
 	w := doRequest(
 		handler, "POST", "/api/v1/users",
-		`{"email":"a@b.com","password":"pw","role":"superuser"}`)
+		`{"email":"a@b.com","password":"password","role":"superuser"}`)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status: got %d, want 400", w.Code)
