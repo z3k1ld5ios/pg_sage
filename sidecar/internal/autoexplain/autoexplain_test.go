@@ -1,6 +1,7 @@
 package autoexplain
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -248,5 +249,81 @@ func TestExtractPlanMetrics_EmptyArray(t *testing.T) {
 			"expected (0, 0), got (%f, %f)",
 			cost, execTime,
 		)
+	}
+}
+
+func TestEnableHint(t *testing.T) {
+	tests := []struct {
+		name        string
+		platform    string
+		wantContain string
+		wantEmpty   bool
+	}{
+		{
+			name:        "cloud-sql mentions cloudsql.enable_auto_explain flag",
+			platform:    "cloud-sql",
+			wantContain: "cloudsql.enable_auto_explain",
+		},
+		{
+			name:        "cloud-sql mentions gcloud command",
+			platform:    "cloud-sql",
+			wantContain: "gcloud sql instances patch",
+		},
+		{
+			name:        "alloydb mentions shared_preload_libraries flag",
+			platform:    "alloydb",
+			wantContain: "shared_preload_libraries",
+		},
+		{
+			name:        "rds mentions parameter group",
+			platform:    "rds",
+			wantContain: "parameter group",
+		},
+		{
+			name:        "aurora mentions parameter group",
+			platform:    "aurora",
+			wantContain: "parameter group",
+		},
+		{
+			name:        "azure mentions azure.extensions",
+			platform:    "azure",
+			wantContain: "azure.extensions",
+		},
+		{
+			name:      "self-managed returns empty",
+			platform:  "self-managed",
+			wantEmpty: true,
+		},
+		{
+			name:      "empty platform returns empty",
+			platform:  "",
+			wantEmpty: true,
+		},
+		{
+			name:      "unknown platform returns empty",
+			platform:  "supabase",
+			wantEmpty: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := EnableHint(tc.platform)
+			if tc.wantEmpty {
+				if got != "" {
+					t.Errorf("EnableHint(%q) = %q, want empty",
+						tc.platform, got)
+				}
+				return
+			}
+			if got == "" {
+				t.Errorf("EnableHint(%q) = empty, want non-empty",
+					tc.platform)
+				return
+			}
+			if !strings.Contains(got, tc.wantContain) {
+				t.Errorf("EnableHint(%q) = %q, want substring %q",
+					tc.platform, got, tc.wantContain)
+			}
+		})
 	}
 }

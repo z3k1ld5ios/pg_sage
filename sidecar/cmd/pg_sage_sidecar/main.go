@@ -272,7 +272,14 @@ func initStandalone() {
 				"auto_explain available via %s",
 				autoExplainAvail.Method)
 		} else {
-			logInfo("startup", "auto_explain not available, using fallback plan sources")
+			if hint := autoexplain.EnableHint(cloudEnvironment); hint != "" {
+				logWarn("startup",
+					"auto_explain not available — to enable on %s: %s. "+
+						"Using catalog-based plan sources until enabled.",
+					cloudEnvironment, hint)
+			} else {
+				logInfo("startup", "auto_explain not available, using fallback plan sources")
+			}
 		}
 	}
 

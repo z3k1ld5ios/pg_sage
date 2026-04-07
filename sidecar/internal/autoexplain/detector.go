@@ -99,3 +99,26 @@ func checkSessionLoad(
 	}
 	return true, nil
 }
+
+// EnableHint returns a platform-specific instruction for enabling
+// auto_explain. Returns an empty string for unknown / self-managed
+// platforms (where the user already controls postgresql.conf).
+func EnableHint(platform string) string {
+	switch platform {
+	case "cloud-sql":
+		return "set the `cloudsql.enable_auto_explain` flag to `on` " +
+			"(adds auto_explain to shared_preload_libraries; requires restart): " +
+			"`gcloud sql instances patch INSTANCE " +
+			"--database-flags=cloudsql.enable_auto_explain=on`"
+	case "alloydb":
+		return "add `auto_explain` to the `google_db_advisor.shared_preload_libraries` " +
+			"flag on the AlloyDB cluster (requires restart)"
+	case "rds", "aurora":
+		return "add `auto_explain` to `shared_preload_libraries` in the RDS/Aurora " +
+			"DB parameter group (requires reboot)"
+	case "azure":
+		return "add `AUTO_EXPLAIN` to the `azure.extensions` server parameter " +
+			"on the Azure Database for PostgreSQL flexible server (requires restart)"
+	}
+	return ""
+}
