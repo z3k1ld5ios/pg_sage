@@ -21,9 +21,11 @@ on:
     - cron: '0 5 * * *'
   workflow_dispatch:
 
-# GITHUB_TOKEN needs `contents: write` to push to the analytics
-# branch. The traffic API requires "push access" which a workflow
-# token with contents:write satisfies.
+# GITHUB_TOKEN is used for checkout + push (contents: write).
+# The traffic API requires `administration: read`, which is NOT
+# a valid GITHUB_TOKEN permission — we need a fine-grained PAT
+# in the TRAFFIC_TOKEN repo secret with:
+#   - Administration: Read (on this repo only)
 permissions:
   contents: write
 
@@ -84,10 +86,20 @@ jobs:
 
       - name: Pull traffic data
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Traffic API requires a PAT with Administration:Read.
+          # The default GITHUB_TOKEN returns HTTP 403 here.
+          GH_TOKEN: ${{ secrets.TRAFFIC_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "ERROR: TRAFFIC_TOKEN secret is not set."
+            echo "Create a fine-grained PAT at"
+            echo "https://github.com/settings/personal-access-tokens/new"
+            echo "with Administration:Read on this repo, then add"
+            echo "it as a TRAFFIC_TOKEN repo secret."
+            exit 1
+          fi
           DATE=$(date -u +%Y-%m-%d)
           mkdir -p "data/$DATE"
           gh api "repos/$REPO/traffic/views" \
