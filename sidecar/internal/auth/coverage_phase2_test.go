@@ -93,7 +93,7 @@ func TestPhase2_CreateUser_HappyPath(t *testing.T) {
 	pool := setupPhase2Pool(t)
 	ctx := context.Background()
 
-	id, err := CreateUser(ctx, pool, "alice@example.com", "pass123", RoleAdmin)
+	id, err := CreateUser(ctx, pool, "alice@example.com", "password123", RoleAdmin)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestPhase2_CreateUser_AllRoles(t *testing.T) {
 	for i, role := range roles {
 		email := strings.Replace("roleN@example.com", "N",
 			strings.Repeat("x", i+1), 1)
-		id, err := CreateUser(ctx, pool, email, "pass", role)
+		id, err := CreateUser(ctx, pool, email, "password", role)
 		if err != nil {
 			t.Fatalf("CreateUser(%s): %v", role, err)
 		}
@@ -139,7 +139,7 @@ func TestPhase2_CreateUser_InvalidRole(t *testing.T) {
 	pool := setupPhase2Pool(t)
 	ctx := context.Background()
 
-	_, err := CreateUser(ctx, pool, "bad@example.com", "pass", "superadmin")
+	_, err := CreateUser(ctx, pool, "bad@example.com", "password", "superadmin")
 	if err == nil {
 		t.Fatal("expected error for invalid role")
 	}
@@ -152,11 +152,11 @@ func TestPhase2_CreateUser_DuplicateEmail(t *testing.T) {
 	pool := setupPhase2Pool(t)
 	ctx := context.Background()
 
-	_, err := CreateUser(ctx, pool, "dup@example.com", "pass1", RoleViewer)
+	_, err := CreateUser(ctx, pool, "dup@example.com", "password1", RoleViewer)
 	if err != nil {
 		t.Fatalf("first CreateUser: %v", err)
 	}
-	_, err = CreateUser(ctx, pool, "dup@example.com", "pass2", RoleAdmin)
+	_, err = CreateUser(ctx, pool, "dup@example.com", "password2", RoleAdmin)
 	if err == nil {
 		t.Fatal("expected error for duplicate email")
 	}
@@ -170,7 +170,7 @@ func TestPhase2_CreateUser_EmptyEmail(t *testing.T) {
 	ctx := context.Background()
 
 	// Empty email violates NOT NULL / unique constraint.
-	_, err := CreateUser(ctx, pool, "", "pass", RoleViewer)
+	_, err := CreateUser(ctx, pool, "", "password", RoleViewer)
 	// This should succeed at the Go level (no input validation on email),
 	// but a second insert with "" would fail due to UNIQUE.
 	if err != nil {
@@ -178,7 +178,7 @@ func TestPhase2_CreateUser_EmptyEmail(t *testing.T) {
 		return
 	}
 	// If first succeeded, second should fail.
-	_, err = CreateUser(ctx, pool, "", "pass", RoleViewer)
+	_, err = CreateUser(ctx, pool, "", "password", RoleViewer)
 	if err == nil {
 		t.Fatal("expected error for duplicate empty email")
 	}
@@ -188,12 +188,12 @@ func TestPhase2_CreateUser_EmptyPassword(t *testing.T) {
 	pool := setupPhase2Pool(t)
 	ctx := context.Background()
 
-	id, err := CreateUser(ctx, pool, "empty-pw@example.com", "", RoleViewer)
-	if err != nil {
-		t.Fatalf("CreateUser with empty password: %v", err)
+	_, err := CreateUser(ctx, pool, "empty-pw@example.com", "", RoleViewer)
+	if err == nil {
+		t.Fatal("expected error for empty password")
 	}
-	if id <= 0 {
-		t.Errorf("expected positive ID, got %d", id)
+	if !strings.Contains(err.Error(), "at least 8 characters") {
+		t.Errorf("error = %q, want password length error", err)
 	}
 }
 
@@ -205,12 +205,12 @@ func TestPhase2_Authenticate_HappyPath(t *testing.T) {
 	pool := setupPhase2Pool(t)
 	ctx := context.Background()
 
-	_, err := CreateUser(ctx, pool, "auth@example.com", "secret", RoleAdmin)
+	_, err := CreateUser(ctx, pool, "auth@example.com", "secret88", RoleAdmin)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 
-	user, err := Authenticate(ctx, pool, "auth@example.com", "secret")
+	user, err := Authenticate(ctx, pool, "auth@example.com", "secret88")
 	if err != nil {
 		t.Fatalf("Authenticate: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestPhase2_Authenticate_UpdatesLastLogin(t *testing.T) {
 	pool := setupPhase2Pool(t)
 	ctx := context.Background()
 
-	id, err := CreateUser(ctx, pool, "login@example.com", "pass", RoleViewer)
+	id, err := CreateUser(ctx, pool, "login@example.com", "password", RoleViewer)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestPhase2_Authenticate_UpdatesLastLogin(t *testing.T) {
 		t.Errorf("last_login before auth = %v, want nil", lastLogin)
 	}
 
-	_, err = Authenticate(ctx, pool, "login@example.com", "pass")
+	_, err = Authenticate(ctx, pool, "login@example.com", "password")
 	if err != nil {
 		t.Fatalf("Authenticate: %v", err)
 	}
@@ -270,12 +270,12 @@ func TestPhase2_Authenticate_WrongPassword(t *testing.T) {
 	pool := setupPhase2Pool(t)
 	ctx := context.Background()
 
-	_, err := CreateUser(ctx, pool, "wrong@example.com", "correct", RoleViewer)
+	_, err := CreateUser(ctx, pool, "wrong@example.com", "correct8", RoleViewer)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 
-	_, err = Authenticate(ctx, pool, "wrong@example.com", "incorrect")
+	_, err = Authenticate(ctx, pool, "wrong@example.com", "incorrect8")
 	if err == nil {
 		t.Fatal("expected error for wrong password")
 	}
@@ -288,7 +288,7 @@ func TestPhase2_Authenticate_NonexistentUser(t *testing.T) {
 	pool := setupPhase2Pool(t)
 	ctx := context.Background()
 
-	_, err := Authenticate(ctx, pool, "nobody@example.com", "pass")
+	_, err := Authenticate(ctx, pool, "nobody@example.com", "password")
 	if err == nil {
 		t.Fatal("expected error for nonexistent user")
 	}
@@ -327,7 +327,7 @@ func TestPhase2_SessionLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	userID, err := CreateUser(ctx, pool,
-		"session@example.com", "pass", RoleOperator)
+		"session@example.com", "password", RoleOperator)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -394,7 +394,7 @@ func TestPhase2_ValidateSession_Expired(t *testing.T) {
 	ctx := context.Background()
 
 	userID, err := CreateUser(ctx, pool,
-		"expired@example.com", "pass", RoleViewer)
+		"expired@example.com", "password", RoleViewer)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -444,7 +444,7 @@ func TestPhase2_CreateSession_MultipleSessions(t *testing.T) {
 	ctx := context.Background()
 
 	userID, err := CreateUser(ctx, pool,
-		"multi@example.com", "pass", RoleViewer)
+		"multi@example.com", "password", RoleViewer)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -490,7 +490,7 @@ func TestPhase2_CleanExpiredSessions(t *testing.T) {
 	ctx := context.Background()
 
 	userID, err := CreateUser(ctx, pool,
-		"clean@example.com", "pass", RoleViewer)
+		"clean@example.com", "password", RoleViewer)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -541,7 +541,7 @@ func TestPhase2_CleanExpiredSessions_NoneExpired(t *testing.T) {
 	ctx := context.Background()
 
 	userID, err := CreateUser(ctx, pool,
-		"noexpire@example.com", "pass", RoleViewer)
+		"noexpire@example.com", "password", RoleViewer)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -603,7 +603,7 @@ func TestPhase2_ListUsers_MultipleUsers(t *testing.T) {
 
 	emails := []string{"a@example.com", "b@example.com", "c@example.com"}
 	for _, email := range emails {
-		_, err := CreateUser(ctx, pool, email, "pass", RoleViewer)
+		_, err := CreateUser(ctx, pool, email, "password", RoleViewer)
 		if err != nil {
 			t.Fatalf("CreateUser(%s): %v", email, err)
 		}
@@ -672,7 +672,7 @@ func TestPhase2_DeleteUser_HappyPath(t *testing.T) {
 	ctx := context.Background()
 
 	id, err := CreateUser(ctx, pool,
-		"delete-me@example.com", "pass", RoleViewer)
+		"delete-me@example.com", "password", RoleViewer)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -709,7 +709,7 @@ func TestPhase2_DeleteUser_CascadesSessions(t *testing.T) {
 	ctx := context.Background()
 
 	id, err := CreateUser(ctx, pool,
-		"cascade@example.com", "pass", RoleViewer)
+		"cascade@example.com", "password", RoleViewer)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -740,7 +740,7 @@ func TestPhase2_UpdateUserRole_HappyPath(t *testing.T) {
 	ctx := context.Background()
 
 	id, err := CreateUser(ctx, pool,
-		"role-change@example.com", "pass", RoleViewer)
+		"role-change@example.com", "password", RoleViewer)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -768,7 +768,7 @@ func TestPhase2_UpdateUserRole_AllTransitions(t *testing.T) {
 	ctx := context.Background()
 
 	id, err := CreateUser(ctx, pool,
-		"transitions@example.com", "pass", RoleViewer)
+		"transitions@example.com", "password", RoleViewer)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -800,7 +800,7 @@ func TestPhase2_UpdateUserRole_InvalidRole(t *testing.T) {
 	ctx := context.Background()
 
 	id, err := CreateUser(ctx, pool,
-		"badrole2@example.com", "pass", RoleViewer)
+		"badrole2@example.com", "password", RoleViewer)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -982,7 +982,7 @@ func TestPhase2_UserCount_AfterCreates(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		email := strings.Replace("countN@example.com", "N",
 			strings.Repeat("x", i+1), 1)
-		_, err := CreateUser(ctx, pool, email, "pass", RoleViewer)
+		_, err := CreateUser(ctx, pool, email, "password", RoleViewer)
 		if err != nil {
 			t.Fatalf("CreateUser: %v", err)
 		}
@@ -1002,7 +1002,7 @@ func TestPhase2_UserCount_AfterDelete(t *testing.T) {
 	ctx := context.Background()
 
 	id, err := CreateUser(ctx, pool,
-		"count-del@example.com", "pass", RoleViewer)
+		"count-del@example.com", "password", RoleViewer)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -1072,7 +1072,7 @@ func TestPhase2_BootstrapAdmin_RejectsWhenUsersExist(t *testing.T) {
 
 	// Create a user first.
 	_, err := CreateUser(ctx, pool,
-		"existing@example.com", "pass", RoleViewer)
+		"existing@example.com", "password", RoleViewer)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -1090,12 +1090,14 @@ func TestPhase2_BootstrapAdmin_RejectsSecondCall(t *testing.T) {
 	pool := setupPhase2Pool(t)
 	ctx := context.Background()
 
-	err := BootstrapAdmin(ctx, pool, "first@example.com", "pass1")
+	// Passwords must be at least 8 characters per the post-hardening
+	// auth policy. Use distinct 12-char passwords for both calls.
+	err := BootstrapAdmin(ctx, pool, "first@example.com", "firstpass123")
 	if err != nil {
 		t.Fatalf("first BootstrapAdmin: %v", err)
 	}
 
-	err = BootstrapAdmin(ctx, pool, "second@example.com", "pass2")
+	err = BootstrapAdmin(ctx, pool, "second@example.com", "secondpass12")
 	if err == nil {
 		t.Fatal("expected error for second bootstrap call")
 	}
@@ -1123,13 +1125,14 @@ func TestPhase2_FullWorkflow_BootstrapAuthSession(t *testing.T) {
 
 	// 1. Bootstrap admin (re-truncate to guard against running sidecar).
 	_, _ = pool.Exec(ctx, "TRUNCATE sage.users CASCADE")
-	err := BootstrapAdmin(ctx, pool, "admin@corp.com", "s3cret")
+	// Password must be ≥8 chars per post-hardening auth policy.
+	err := BootstrapAdmin(ctx, pool, "admin@corp.com", "s3cretpass8")
 	if err != nil {
 		t.Fatalf("BootstrapAdmin: %v", err)
 	}
 
 	// 2. Authenticate.
-	user, err := Authenticate(ctx, pool, "admin@corp.com", "s3cret")
+	user, err := Authenticate(ctx, pool, "admin@corp.com", "s3cretpass8")
 	if err != nil {
 		t.Fatalf("Authenticate: %v", err)
 	}

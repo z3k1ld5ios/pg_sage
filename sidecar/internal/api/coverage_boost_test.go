@@ -1619,7 +1619,7 @@ func TestCoverage_Resume_FleetWide(t *testing.T) {
 		})
 		mgr.EmergencyStop(name)
 	}
-	r := NewRouter(mgr, cfg, nil)
+	r := NewRouter(mgr, cfg, nil, fakeAdminMiddleware)
 	w := post(t, r, "/api/v1/resume", "")
 	if w.Code != 200 {
 		t.Fatalf("status: %d", w.Code)
@@ -1645,7 +1645,8 @@ func TestCoverage_NewRouterFull_FleetActions(t *testing.T) {
 
 	// Fleet action deps with Fleet manager but no Store/Executor.
 	actions := &ActionDeps{Fleet: mgr}
-	r := NewRouterWithActions(mgr, cfg, nil, actions)
+	r := NewRouterWithActions(
+		mgr, cfg, nil, actions, fakeAdminMiddleware)
 
 	// The pending count should be registered even without store.
 	req := httptest.NewRequest(
@@ -1660,7 +1661,7 @@ func TestCoverage_NewRouterFull_FleetActions(t *testing.T) {
 	// Approve should return 501 (not implemented) for fleet mode.
 	req2 := httptest.NewRequest(
 		"POST", "/api/v1/actions/1/approve", nil)
-	req2 = withUser(req2, testOperatorUser())
+	req2.Header.Set("Content-Type", "application/json")
 	w2 := httptest.NewRecorder()
 	r.ServeHTTP(w2, req2)
 	if w2.Code != http.StatusNotImplemented {
@@ -2101,10 +2102,12 @@ func TestCoverage_TestConnectionPreview_DefaultPort(
 ) {
 	handler := testConnectionPreviewHandler()
 	// Port 0 should default to 5432, sslmode empty defaults
-	// to "require".
+	// to "require". Use a non-resolvable host so SSRF check
+	// passes (returns false on lookup error) and the
+	// connection attempt fails naturally.
 	w := doRequest(handler, "POST",
 		"/api/v1/databases/managed/test-connection",
-		`{"host":"127.0.0.1","port":0,
+		`{"host":"nonexistent.invalid","port":0,
 		  "database_name":"nonexistent","username":"u",
 		  "password":"p"}`)
 	if w.Code != http.StatusOK {
@@ -2118,11 +2121,26 @@ func TestCoverage_TestConnectionPreview_CustomSSL(
 	handler := testConnectionPreviewHandler()
 	w := doRequest(handler, "POST",
 		"/api/v1/databases/managed/test-connection",
-		`{"host":"127.0.0.1","port":5432,
+		`{"host":"nonexistent.invalid","port":5432,
 		  "database_name":"db","username":"u",
 		  "password":"p","sslmode":"disable"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+}
+
+func TestCoverage_TestConnectionPreview_BlocksLoopback(
+	t *testing.T,
+) {
+	// SSRF protection: loopback addresses must be rejected.
+	handler := testConnectionPreviewHandler()
+	w := doRequest(handler, "POST",
+		"/api/v1/databases/managed/test-connection",
+		`{"host":"127.0.0.1","port":5432,
+		  "database_name":"db","username":"u",
+		  "password":"p","sslmode":"disable"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400", w.Code)
 	}
 }
 
@@ -2654,7 +2672,7 @@ func TestCoverage_Suppress_ViaRouter_NoPools(t *testing.T) {
 		Config: config.DatabaseConfig{Name: "db1"},
 		Status: &fleet.InstanceStatus{Connected: false},
 	})
-	r := NewRouter(mgr, cfg, nil)
+	r := NewRouter(mgr, cfg, nil, fakeAdminMiddleware)
 
 	w := post(t, r, "/api/v1/findings/42/suppress", "")
 	if w.Code != 200 {
@@ -2674,7 +2692,7 @@ func TestCoverage_Unsuppress_ViaRouter_NoPools(t *testing.T) {
 		Config: config.DatabaseConfig{Name: "db1"},
 		Status: &fleet.InstanceStatus{Connected: false},
 	})
-	r := NewRouter(mgr, cfg, nil)
+	r := NewRouter(mgr, cfg, nil, fakeAdminMiddleware)
 
 	w := post(t, r, "/api/v1/findings/42/unsuppress", "")
 	if w.Code != 200 {

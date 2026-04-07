@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,9 +9,28 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pg-sage/sidecar/internal/auth"
 	"github.com/pg-sage/sidecar/internal/config"
 	"github.com/pg-sage/sidecar/internal/fleet"
 )
+
+// fakeAdminMiddleware injects an admin user into the request context
+// so RequireRole-wrapped routes can be exercised in unit tests that
+// don't have a real session pool.
+func fakeAdminMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(
+		w http.ResponseWriter, r *http.Request,
+	) {
+		user := &auth.User{
+			ID:    1,
+			Email: "test-admin@example.com",
+			Role:  "admin",
+		}
+		ctx := context.WithValue(
+			r.Context(), userContextKey, user)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
 
 func testRouter(databases ...string) http.Handler {
 	cfg := &config.Config{
@@ -37,7 +57,7 @@ func testRouter(databases ...string) http.Handler {
 			},
 		})
 	}
-	return NewRouter(mgr, cfg, nil)
+	return NewRouter(mgr, cfg, nil, fakeAdminMiddleware)
 }
 
 func get(
@@ -468,7 +488,7 @@ func TestAPI_Resume(t *testing.T) {
 		Status: &fleet.InstanceStatus{Connected: true},
 	})
 	mgr.EmergencyStop("db1")
-	r := NewRouter(mgr, cfg, nil)
+	r := NewRouter(mgr, cfg, nil, fakeAdminMiddleware)
 	w := post(t, r, "/api/v1/resume?database=db1", "")
 	if w.Code != 200 {
 		t.Fatalf("status: %d", w.Code)

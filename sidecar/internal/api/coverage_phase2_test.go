@@ -1887,7 +1887,7 @@ func TestPhase2_LoginHandler_BadPassword(t *testing.T) {
 	phase2CleanTables(t, pool, ctx)
 
 	_, err := auth.CreateUser(
-		ctx, pool, "user@test.com", "correct", "viewer")
+		ctx, pool, "user@test.com", "correct8", "viewer")
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
@@ -1962,7 +1962,7 @@ func TestPhase2_ListUsersHandler_RealDB(t *testing.T) {
 	phase2CleanTables(t, pool, ctx)
 
 	_, err := auth.CreateUser(
-		ctx, pool, "admin@test.com", "pass", "admin")
+		ctx, pool, "admin@test.com", "password", "admin")
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
@@ -1990,7 +1990,7 @@ func TestPhase2_CreateUserHandler_RealDB(t *testing.T) {
 	phase2CleanTables(t, pool, ctx)
 
 	handler := createUserHandler(pool)
-	body := `{"email":"new@test.com","password":"pass","role":"viewer"}`
+	body := `{"email":"new@test.com","password":"password","role":"viewer"}`
 	req := httptest.NewRequest("POST",
 		"/api/v1/users", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -2016,13 +2016,13 @@ func TestPhase2_CreateUserHandler_DuplicateEmail(
 	phase2CleanTables(t, pool, ctx)
 
 	_, err := auth.CreateUser(
-		ctx, pool, "dup@test.com", "pass", "viewer")
+		ctx, pool, "dup@test.com", "password", "viewer")
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
 
 	handler := createUserHandler(pool)
-	body := `{"email":"dup@test.com","password":"pass","role":"viewer"}`
+	body := `{"email":"dup@test.com","password":"password","role":"viewer"}`
 	req := httptest.NewRequest("POST",
 		"/api/v1/users", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -2039,7 +2039,7 @@ func TestPhase2_CreateUserHandler_InvalidRole(t *testing.T) {
 	phase2CleanTables(t, pool, ctx)
 
 	handler := createUserHandler(pool)
-	body := `{"email":"r@test.com","password":"pass","role":"superadmin"}`
+	body := `{"email":"r@test.com","password":"password","role":"superadmin"}`
 	req := httptest.NewRequest("POST",
 		"/api/v1/users", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -2056,7 +2056,7 @@ func TestPhase2_DeleteUserHandler_RealDB(t *testing.T) {
 	phase2CleanTables(t, pool, ctx)
 
 	id, err := auth.CreateUser(
-		ctx, pool, "del@test.com", "pass", "viewer")
+		ctx, pool, "del@test.com", "password", "viewer")
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
@@ -2105,7 +2105,7 @@ func TestPhase2_UpdateUserRoleHandler_RealDB(t *testing.T) {
 	phase2CleanTables(t, pool, ctx)
 
 	id, err := auth.CreateUser(
-		ctx, pool, "role@test.com", "pass", "viewer")
+		ctx, pool, "role@test.com", "password", "viewer")
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
@@ -2892,7 +2892,7 @@ func TestPhase2_LogoutHandler_WithSession(t *testing.T) {
 
 	// Create user and session.
 	userID, err := auth.CreateUser(
-		ctx, pool, "logout@test.com", "pass", "viewer")
+		ctx, pool, "logout@test.com", "password", "viewer")
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
