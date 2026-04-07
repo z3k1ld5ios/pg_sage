@@ -56,3 +56,21 @@ e2e_config.yaml
 sidecar/tests/integration/pg_sage_sidecar
 e2e/test-results/
 sidecar/tasks/deploy_config.yaml
+
+# Local launch-prep artifacts (do not commit)
+local_config.yaml
+pg_sage_blog.html
+blog/
+files_extracted/
+deep_test/
+sidecar/cloud_test/
+sidecar/deep_test/
+cloudsqltests/setup_cloudsql.sql
+cloudsqltests/config_fleet_test.yaml
+cloudsqltests/config_sage_test.yaml
+sidecar/cmd/create_admin_alloydb/
+
+# NOTE: sidecar/test/hint_verify/ and e2e/walkthrough.spec.ts are
+# intentionally tracked — they are valuable test infrastructure.
+# hint_verify skips in CI when port 5435 is unreachable (requires
+# the pg17+pg_hint_plan Docker image at sidecar/test/hint_verify/Dockerfile).
