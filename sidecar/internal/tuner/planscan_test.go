@@ -524,3 +524,171 @@ func TestScanPlan_BareObjectFormat(t *testing.T) {
 		t.Error("disk_sort not found in bare object format")
 	}
 }
+
+// ----------------------------------------------------------------
+// ExtractRelations / canonicalization tests
+// ----------------------------------------------------------------
+
+func TestExtractRelations_SingleScan(t *testing.T) {
+	plan := `[{"Plan": {
+		"Node Type": "Seq Scan",
+		"Schema": "public",
+		"Relation Name": "orders",
+		"Plan Rows": 100
+	}}]`
+	rels, err := ExtractRelations([]byte(plan))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rels) != 1 || !rels["public.orders"] {
+		t.Errorf("got %v, want {public.orders:true}", rels)
+	}
+}
+
+func TestExtractRelations_NestedJoin(t *testing.T) {
+	plan := `[{"Plan": {
+		"Node Type": "Hash Join",
+		"Plan Rows": 500,
+		"Plans": [
+			{"Node Type": "Seq Scan",
+			 "Schema": "public", "Relation Name": "orders",
+			 "Plan Rows": 100},
+			{"Node Type": "Hash", "Plan Rows": 200, "Plans": [
+				{"Node Type": "Index Scan",
+				 "Schema": "billing", "Relation Name": "invoices",
+				 "Plan Rows": 200}
+			]}
+		]
+	}}]`
+	rels, err := ExtractRelations([]byte(plan))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rels) != 2 {
+		t.Fatalf("got %d relations, want 2: %v", len(rels), rels)
+	}
+	if !rels["public.orders"] {
+		t.Errorf("missing public.orders in %v", rels)
+	}
+	if !rels["billing.invoices"] {
+		t.Errorf("missing billing.invoices in %v", rels)
+	}
+}
+
+func TestExtractRelations_NoSchemaDefaultsToPublic(t *testing.T) {
+	plan := `[{"Plan": {
+		"Node Type": "Seq Scan",
+		"Relation Name": "users",
+		"Plan Rows": 50
+	}}]`
+	rels, err := ExtractRelations([]byte(plan))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !rels["public.users"] {
+		t.Errorf("got %v, want public.users", rels)
+	}
+}
+
+func TestExtractRelations_CaseInsensitive(t *testing.T) {
+	plan := `[{"Plan": {
+		"Node Type": "Seq Scan",
+		"Schema": "PUBLIC",
+		"Relation Name": "Orders",
+		"Plan Rows": 50
+	}}]`
+	rels, err := ExtractRelations([]byte(plan))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !rels["public.orders"] {
+		t.Errorf("got %v, want public.orders (lowercased)", rels)
+	}
+}
+
+func TestExtractRelations_NoRelations(t *testing.T) {
+	plan := `[{"Plan": {
+		"Node Type": "Result",
+		"Plan Rows": 1
+	}}]`
+	rels, err := ExtractRelations([]byte(plan))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rels) != 0 {
+		t.Errorf("expected empty, got %v", rels)
+	}
+}
+
+func TestExtractRelations_Malformed(t *testing.T) {
+	_, err := ExtractRelations([]byte("not json"))
+	if err == nil {
+		t.Error("expected error for malformed JSON, got nil")
+	}
+}
+
+func TestExtractRelations_EmptyArray(t *testing.T) {
+	rels, err := ExtractRelations([]byte("[]"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rels) != 0 {
+		t.Errorf("expected empty for [], got %v", rels)
+	}
+}
+
+func TestExtractRelations_BareObjectFormat(t *testing.T) {
+	// Same shape used by other ScanPlan tests for backward compat.
+	plan := `{"Plan": {
+		"Node Type": "Seq Scan",
+		"Schema": "public",
+		"Relation Name": "events",
+		"Plan Rows": 10
+	}}`
+	rels, err := ExtractRelations([]byte(plan))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !rels["public.events"] {
+		t.Errorf("got %v, want public.events", rels)
+	}
+}
+
+func TestCanonicalizeTableRef(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"orders", "public.orders"},
+		{"public.orders", "public.orders"},
+		{"  Public.Orders  ", "public.orders"},
+		{"billing.invoices", "billing.invoices"},
+		{"", ""},
+		{"   ", ""},
+	}
+	for _, c := range cases {
+		got := CanonicalizeTableRef(c.in)
+		if got != c.want {
+			t.Errorf("CanonicalizeTableRef(%q)=%q, want %q",
+				c.in, got, c.want)
+		}
+	}
+}
+
+func TestCanonicalTableName(t *testing.T) {
+	cases := []struct {
+		schema, table, want string
+	}{
+		{"public", "orders", "public.orders"},
+		{"", "orders", "public.orders"},
+		{"BILLING", "Invoices", "billing.invoices"},
+		{"public", "", ""},
+		{"  ", "  ", ""},
+	}
+	for _, c := range cases {
+		got := CanonicalTableName(c.schema, c.table)
+		if got != c.want {
+			t.Errorf("CanonicalTableName(%q,%q)=%q, want %q",
+				c.schema, c.table, got, c.want)
+		}
+	}
+}

@@ -230,3 +230,61 @@ func checkParallelDisabled(
 		Alias:        n.Alias,
 	}
 }
+
+// ExtractRelations parses an EXPLAIN (FORMAT JSON) plan and returns
+// the set of relation names referenced anywhere in the plan tree.
+// Each entry is canonicalized to "schema.table" form (defaulting
+// to "public" when no schema is present in the plan node).
+//
+// Used by the tuner to gate hint application: if any relation in
+// the plan has a pending index optimizer recommendation, the tuner
+// defers the query so a hash join hint isn't applied just before
+// a covering index lands and renders it obsolete.
+func ExtractRelations(planJSON []byte) (map[string]bool, error) {
+	root, err := parsePlanRoot(planJSON)
+	if err != nil {
+		return nil, fmt.Errorf("tuner: parse plan: %w", err)
+	}
+	out := make(map[string]bool)
+	collectRelations(root, out)
+	return out, nil
+}
+
+func collectRelations(node planNode, out map[string]bool) {
+	if node.RelationName != "" {
+		out[CanonicalTableName(node.Schema, node.RelationName)] = true
+	}
+	for i := range node.Plans {
+		collectRelations(node.Plans[i], out)
+	}
+}
+
+// CanonicalTableName returns "schema.table" with schema defaulting
+// to "public" when empty. Both inputs are lowercased so comparisons
+// against the deferred-table set are case-insensitive.
+func CanonicalTableName(schema, table string) string {
+	schema = strings.ToLower(strings.TrimSpace(schema))
+	table = strings.ToLower(strings.TrimSpace(table))
+	if table == "" {
+		return ""
+	}
+	if schema == "" {
+		schema = "public"
+	}
+	return schema + "." + table
+}
+
+// CanonicalizeTableRef accepts a possibly-qualified table reference
+// (e.g., "orders" or "public.orders") and returns the canonical
+// "schema.table" form. Used to normalize entries in the deferred
+// set built from optimizer recommendations.
+func CanonicalizeTableRef(ref string) string {
+	ref = strings.ToLower(strings.TrimSpace(ref))
+	if ref == "" {
+		return ""
+	}
+	if strings.Contains(ref, ".") {
+		return ref
+	}
+	return "public." + ref
+}

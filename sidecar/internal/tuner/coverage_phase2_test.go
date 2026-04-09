@@ -133,7 +133,7 @@ func TestPhase2_Tune_NoCandidates(t *testing.T) {
 		PlanTimeRatio: 0.5,
 	}, nil, noopLog2)
 
-	findings, err := tu.Tune(context.Background())
+	findings, err := tu.Tune(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("Tune: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestPhase2_Tune_CooldownSkip(t *testing.T) {
 		tu.recentlyTuned[c.QueryID] = 5
 	}
 
-	findings, err := tu.Tune(context.Background())
+	findings, err := tu.Tune(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("Tune: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestPhase2_Tune_TickCooldowns(t *testing.T) {
 	// Pre-seed a cooldown that will expire.
 	tu.recentlyTuned[12345] = 1
 
-	_, _ = tu.Tune(context.Background())
+	_, _ = tu.Tune(context.Background(), nil)
 
 	// After tickCooldowns, entry at 1 should be deleted.
 	if _, ok := tu.recentlyTuned[12345]; ok {
@@ -212,7 +212,7 @@ func TestPhase2_Tune_TickCooldowns_Decrement(t *testing.T) {
 
 	tu.recentlyTuned[99999] = 3
 
-	_, _ = tu.Tune(context.Background())
+	_, _ = tu.Tune(context.Background(), nil)
 
 	remaining, ok := tu.recentlyTuned[99999]
 	if !ok {

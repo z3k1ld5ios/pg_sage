@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,8 +33,17 @@ type WorkloadForecaster interface {
 }
 
 // QueryTuner produces per-query tuning findings.
+//
+// deferredTables contains canonical "schema.table" entries that
+// have pending index optimizer recommendations from the current
+// or prior cycles. The tuner must skip candidates whose plans
+// reference any of these tables, so a hint plan isn't installed
+// just before a covering index would render it obsolete.
 type QueryTuner interface {
-	Tune(ctx context.Context) ([]Finding, error)
+	Tune(
+		ctx context.Context,
+		deferredTables map[string]bool,
+	) ([]Finding, error)
 }
 
 // Analyzer runs the rules engine on a recurring interval, producing
@@ -257,12 +267,21 @@ func (a *Analyzer) cycle(ctx context.Context) {
 	allFindings = append(allFindings, seqFindings...)
 
 	// LLM index optimization (after all rule-based findings).
+	// Tables with fresh recommendations are tracked so the tuner
+	// (which runs later this cycle) defers any query reading from
+	// them — applying a hint plan immediately before a covering
+	// index lands risks installing a directive that becomes
+	// obsolete or counterproductive once the index is created.
+	deferredTables := make(map[string]bool)
 	if a.optimizer != nil {
 		optResult, err := a.optimizer.Analyze(ctx, current)
 		if err != nil {
 			a.logFn("WARN", "analyzer: index optimizer: %v", err)
 		} else if optResult != nil {
 			for _, rec := range optResult.Recommendations {
+				if t := canonicalTable(rec.Table); t != "" {
+					deferredTables[t] = true
+				}
 				allFindings = append(allFindings, Finding{
 					Category:         rec.Category,
 					Severity:         rec.Severity,
@@ -293,6 +312,14 @@ func (a *Analyzer) cycle(ctx context.Context) {
 		}
 	}
 
+	// Pull tables with open index recommendations from prior cycles
+	// so the tuner also defers those (the trust-ramped executor may
+	// not have applied them yet). The current-cycle entries above
+	// already cover any rec the optimizer just produced.
+	for _, t := range a.openIndexRecommendationTables(ctx) {
+		deferredTables[t] = true
+	}
+
 	// LLM configuration advisor.
 	if a.advisor != nil {
 		advFindings, err := a.advisor.Analyze(ctx)
@@ -313,9 +340,11 @@ func (a *Analyzer) cycle(ctx context.Context) {
 		}
 	}
 
-	// Per-query tuning.
+	// Per-query tuning. The tuner skips queries whose plans read
+	// from tables in deferredTables (built from current + prior
+	// optimizer recommendations).
 	if a.tuner != nil {
-		tunerFindings, err := a.tuner.Tune(ctx)
+		tunerFindings, err := a.tuner.Tune(ctx, deferredTables)
 		if err != nil {
 			a.logFn("WARN", "analyzer", "tuner: %v", err)
 		} else {
@@ -600,4 +629,60 @@ func computeIOUtilPct(snap *collector.Snapshot) float64 {
 		pct = 100
 	}
 	return pct
+}
+
+// canonicalTable normalizes a table reference (e.g. "orders" or
+// "public.orders") to canonical lowercase "schema.table" form,
+// defaulting to schema "public". Returns "" for empty input.
+//
+// Used to build the deferredTables set so the tuner can reliably
+// match plan-extracted relations against optimizer recommendations
+// even when the LLM returns unqualified names.
+func canonicalTable(ref string) string {
+	ref = strings.ToLower(strings.TrimSpace(ref))
+	if ref == "" {
+		return ""
+	}
+	if strings.Contains(ref, ".") {
+		return ref
+	}
+	return "public." + ref
+}
+
+// openIndexRecommendationTables returns the canonical names of
+// tables that have open (unresolved, unsuppressed) index-related
+// findings. The tuner uses these to defer queries on tables where
+// an index recommendation is still pending — applying a hint plan
+// before the index lands risks installing a directive that becomes
+// stale once the executor creates the index.
+func (a *Analyzer) openIndexRecommendationTables(
+	ctx context.Context,
+) []string {
+	if a.pool == nil {
+		return nil
+	}
+	rows, err := a.pool.Query(ctx,
+		`SELECT DISTINCT object_identifier
+		 FROM sage.findings
+		 WHERE category ILIKE '%index%'
+		   AND status NOT IN ('resolved','suppressed')`,
+	)
+	if err != nil {
+		a.logFn("WARN",
+			"analyzer: load open index findings: %v", err)
+		return nil
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var ident string
+		if err := rows.Scan(&ident); err != nil {
+			continue
+		}
+		if t := canonicalTable(ident); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }

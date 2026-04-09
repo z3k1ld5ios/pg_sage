@@ -68,8 +68,18 @@ type candidate struct {
 
 // Tune queries pg_stat_statements for slow queries, scans
 // their plans, and returns actionable findings.
+//
+// deferredTables names "schema.table" entries that have pending
+// index optimizer recommendations. The tuner skips any candidate
+// whose plan reads from one of these tables — applying a hint
+// (e.g. HashJoin) just before a covering index lands risks
+// installing a directive that becomes obsolete or actively wrong
+// once the index is created. The deferred set must be canonical
+// "schema.table" form (use CanonicalizeTableRef on inputs).
+// nil/empty disables gating, preserving prior behaviour.
 func (t *Tuner) Tune(
 	ctx context.Context,
+	deferredTables map[string]bool,
 ) ([]analyzer.Finding, error) {
 	t.tickCooldowns()
 	candidates, err := t.fetchCandidates(ctx)
@@ -84,6 +94,13 @@ func (t *Tuner) Tune(
 		if _, ok := t.recentlyTuned[c.QueryID]; ok {
 			continue
 		}
+		if reason := t.deferralReason(ctx, c, deferredTables); reason != "" {
+			t.logFn("INFO",
+				"tuner: deferring queryid=%d, %s "+
+					"(optimizer recommendation pending)",
+				c.QueryID, reason)
+			continue
+		}
 		f := t.processCandidate(ctx, c)
 		if len(f) > 0 {
 			t.recentlyTuned[c.QueryID] = t.cooldownCycles()
@@ -91,6 +108,54 @@ func (t *Tuner) Tune(
 		findings = append(findings, f...)
 	}
 	return findings, nil
+}
+
+// deferralReason returns a non-empty string when the candidate
+// should be skipped because at least one of the relations its
+// plan touches has a pending index optimizer recommendation.
+// The string identifies the matched relation for logging.
+func (t *Tuner) deferralReason(
+	ctx context.Context,
+	c candidate,
+	deferredTables map[string]bool,
+) string {
+	if len(deferredTables) == 0 {
+		return ""
+	}
+	planJSON := t.fetchPlanJSON(ctx, c.QueryID)
+	if planJSON == "" {
+		return ""
+	}
+	reason, err := matchDeferred([]byte(planJSON), deferredTables)
+	if err != nil {
+		t.logFn("WARN",
+			"tuner: extract relations queryid=%d: %v",
+			c.QueryID, err)
+		return ""
+	}
+	return reason
+}
+
+// matchDeferred is the pure form of the deferral check: given a
+// plan JSON and a deferred-tables set, it returns a non-empty
+// reason string when any relation in the plan is in the set.
+// Pulled out so the gating logic is testable without a database.
+func matchDeferred(
+	planJSON []byte, deferredTables map[string]bool,
+) (string, error) {
+	if len(deferredTables) == 0 || len(planJSON) == 0 {
+		return "", nil
+	}
+	rels, err := ExtractRelations(planJSON)
+	if err != nil {
+		return "", err
+	}
+	for rel := range rels {
+		if deferredTables[rel] {
+			return "table " + rel + " has pending index recommendation", nil
+		}
+	}
+	return "", nil
 }
 
 // tickCooldowns decrements all cooldown counters and removes
@@ -305,6 +370,9 @@ func (t *Tuner) scanPlanForQuery(
 func (t *Tuner) fetchPlanJSON(
 	ctx context.Context, queryID int64,
 ) string {
+	if t.pool == nil {
+		return ""
+	}
 	var planJSON []byte
 	err := t.pool.QueryRow(ctx,
 		`SELECT plan_json FROM sage.explain_cache

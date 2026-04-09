@@ -3723,7 +3723,7 @@ func TestFunctional_Coverage_Tune_NilPool(t *testing.T) {
 			// That's also acceptable behavior.
 		}
 	}()
-	_, _ = tu.Tune(context.Background())
+	_, _ = tu.Tune(context.Background(), nil)
 }
 
 // noopLog is a no-op logger alias used by rewrite tests.
