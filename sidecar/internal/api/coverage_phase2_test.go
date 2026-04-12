@@ -1742,6 +1742,11 @@ func TestPhase2_HotReload_Alerting(t *testing.T) {
 		t.Errorf("end: got %q",
 			cfg.Alerting.QuietHoursEnd)
 	}
+	hotReload(cfg, "alerting.timezone", "America/New_York")
+	if cfg.Alerting.Timezone != "America/New_York" {
+		t.Errorf("timezone: got %q",
+			cfg.Alerting.Timezone)
+	}
 }
 
 func TestPhase2_HotReload_Retention(t *testing.T) {
@@ -1772,6 +1777,147 @@ func TestPhase2_HotReload_UnknownPrefix(t *testing.T) {
 	hotReload(cfg, "unknown.key", "value")
 	if cfg.Trust.Level != "observation" {
 		t.Error("config should not have changed")
+	}
+}
+
+func TestPhase2_HotReload_Briefing(t *testing.T) {
+	cfg := &config.Config{}
+	hotReload(cfg, "briefing.schedule", "0 8 * * MON")
+	if cfg.Briefing.Schedule != "0 8 * * MON" {
+		t.Errorf("schedule: got %q",
+			cfg.Briefing.Schedule)
+	}
+	hotReload(cfg, "briefing.slack_webhook_url",
+		"https://hooks.slack.com/briefing")
+	if cfg.Briefing.SlackWebhookURL !=
+		"https://hooks.slack.com/briefing" {
+		t.Errorf("slack: got %q",
+			cfg.Briefing.SlackWebhookURL)
+	}
+}
+
+func TestPhase2_HotReload_Forecaster(t *testing.T) {
+	cfg := &config.Config{}
+	hotReload(cfg, "forecaster.enabled", "true")
+	if !cfg.Forecaster.Enabled {
+		t.Error("enabled should be true")
+	}
+	hotReload(cfg, "forecaster.lookback_days", "30")
+	if cfg.Forecaster.LookbackDays != 30 {
+		t.Errorf("lookback_days: got %d",
+			cfg.Forecaster.LookbackDays)
+	}
+	// Float field: disk_warn_growth_gb_day.
+	hotReload(cfg, "forecaster.disk_warn_growth_gb_day", "1.5")
+	if cfg.Forecaster.DiskWarnGrowthGBDay != 1.5 {
+		t.Errorf("disk_warn: got %f",
+			cfg.Forecaster.DiskWarnGrowthGBDay)
+	}
+}
+
+func TestPhase2_HotReload_AutoExplain(t *testing.T) {
+	cfg := &config.Config{}
+	hotReload(cfg, "auto_explain.enabled", "true")
+	if !cfg.AutoExplain.Enabled {
+		t.Error("enabled should be true")
+	}
+	hotReload(cfg,
+		"auto_explain.log_min_duration_ms", "100")
+	if cfg.AutoExplain.LogMinDurationMs != 100 {
+		t.Errorf("log_min_duration_ms: got %d",
+			cfg.AutoExplain.LogMinDurationMs)
+	}
+	hotReload(cfg,
+		"auto_explain.collect_interval_seconds", "60")
+	if cfg.AutoExplain.CollectIntervalSeconds != 60 {
+		t.Errorf("collect_interval: got %d",
+			cfg.AutoExplain.CollectIntervalSeconds)
+	}
+	hotReload(cfg,
+		"auto_explain.max_plans_per_cycle", "50")
+	if cfg.AutoExplain.MaxPlansPerCycle != 50 {
+		t.Errorf("max_plans: got %d",
+			cfg.AutoExplain.MaxPlansPerCycle)
+	}
+}
+
+func TestPhase2_HotReload_Tuner(t *testing.T) {
+	cfg := &config.Config{}
+	hotReload(cfg, "tuner.enabled", "true")
+	if !cfg.Tuner.Enabled {
+		t.Error("enabled should be true")
+	}
+	hotReload(cfg, "tuner.llm_enabled", "true")
+	if !cfg.Tuner.LLMEnabled {
+		t.Error("llm_enabled should be true")
+	}
+	hotReload(cfg, "tuner.work_mem_max_mb", "256")
+	if cfg.Tuner.WorkMemMaxMB != 256 {
+		t.Errorf("work_mem_max_mb: got %d",
+			cfg.Tuner.WorkMemMaxMB)
+	}
+	hotReload(cfg, "tuner.plan_time_ratio", "0.25")
+	if cfg.Tuner.PlanTimeRatio != 0.25 {
+		t.Errorf("plan_time_ratio: got %f",
+			cfg.Tuner.PlanTimeRatio)
+	}
+	hotReload(cfg,
+		"tuner.nested_loop_row_threshold", "100000")
+	if cfg.Tuner.NestedLoopRowThreshold != 100000 {
+		t.Errorf("nested_loop: got %d",
+			cfg.Tuner.NestedLoopRowThreshold)
+	}
+	hotReload(cfg,
+		"tuner.parallel_min_table_rows", "500000")
+	if cfg.Tuner.ParallelMinTableRows != 500000 {
+		t.Errorf("parallel_min: got %d",
+			cfg.Tuner.ParallelMinTableRows)
+	}
+	hotReload(cfg, "tuner.min_query_calls", "10")
+	if cfg.Tuner.MinQueryCalls != 10 {
+		t.Errorf("min_query_calls: got %d",
+			cfg.Tuner.MinQueryCalls)
+	}
+	hotReload(cfg, "tuner.verify_after_apply", "true")
+	if !cfg.Tuner.VerifyAfterApply {
+		t.Error("verify_after_apply should be true")
+	}
+}
+
+func TestPhase2_HotReload_OptimizerLLM(t *testing.T) {
+	cfg := &config.Config{}
+	hotReload(cfg, "llm.optimizer_llm.enabled", "true")
+	if !cfg.LLM.OptimizerLLM.Enabled {
+		t.Error("enabled should be true")
+	}
+	hotReload(cfg, "llm.optimizer_llm.endpoint",
+		"https://api.reasoning.example.com")
+	if cfg.LLM.OptimizerLLM.Endpoint !=
+		"https://api.reasoning.example.com" {
+		t.Errorf("endpoint: got %q",
+			cfg.LLM.OptimizerLLM.Endpoint)
+	}
+	hotReload(cfg, "llm.optimizer_llm.model", "o1-mini")
+	if cfg.LLM.OptimizerLLM.Model != "o1-mini" {
+		t.Errorf("model: got %q",
+			cfg.LLM.OptimizerLLM.Model)
+	}
+	hotReload(cfg,
+		"llm.optimizer_llm.token_budget_daily", "50000")
+	if cfg.LLM.OptimizerLLM.TokenBudgetDaily != 50000 {
+		t.Errorf("token_budget: got %d",
+			cfg.LLM.OptimizerLLM.TokenBudgetDaily)
+	}
+	hotReload(cfg,
+		"llm.optimizer_llm.max_output_tokens", "4096")
+	if cfg.LLM.OptimizerLLM.MaxOutputTokens != 4096 {
+		t.Errorf("max_output: got %d",
+			cfg.LLM.OptimizerLLM.MaxOutputTokens)
+	}
+	hotReload(cfg,
+		"llm.optimizer_llm.fallback_to_general", "true")
+	if !cfg.LLM.OptimizerLLM.FallbackToGeneral {
+		t.Error("fallback should be true")
 	}
 }
 

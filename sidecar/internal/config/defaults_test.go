@@ -116,6 +116,137 @@ func TestDefaultConfig_CriticalNonZeroDefaults(t *testing.T) {
 	}
 }
 
+// TestDefaultConfig_TunerV085Defaults verifies that the v0.8.5
+// tuner fields (hint revalidation, stale stats) have sane non-zero
+// defaults. These are production-critical: zero values for ratios
+// and thresholds would cause always-retire or never-retire behavior.
+func TestDefaultConfig_TunerV085Defaults(t *testing.T) {
+	cfg := DefaultConfig()
+	tu := cfg.Tuner
+
+	if tu.HintRetirementDays != DefaultTunerHintRetirementDays {
+		t.Errorf("HintRetirementDays = %d, want %d",
+			tu.HintRetirementDays, DefaultTunerHintRetirementDays)
+	}
+	if tu.HintRetirementDays == 0 {
+		t.Error("HintRetirementDays must not be 0 " +
+			"(would retire hints immediately)")
+	}
+
+	if tu.RevalidationIntervalHours !=
+		DefaultTunerRevalidationIntervalHours {
+		t.Errorf("RevalidationIntervalHours = %d, want %d",
+			tu.RevalidationIntervalHours,
+			DefaultTunerRevalidationIntervalHours)
+	}
+
+	if tu.RevalidationKeepRatio !=
+		DefaultTunerRevalidationKeepRatio {
+		t.Errorf("RevalidationKeepRatio = %f, want %f",
+			tu.RevalidationKeepRatio,
+			DefaultTunerRevalidationKeepRatio)
+	}
+	if tu.RevalidationKeepRatio <= 0 {
+		t.Error("RevalidationKeepRatio must be > 0")
+	}
+
+	if tu.RevalidationRollbackRatio !=
+		DefaultTunerRevalidationRollbackRatio {
+		t.Errorf("RevalidationRollbackRatio = %f, want %f",
+			tu.RevalidationRollbackRatio,
+			DefaultTunerRevalidationRollbackRatio)
+	}
+
+	if tu.RevalidationExplainTimeoutMs !=
+		DefaultTunerRevalidationExplainTimeoutMs {
+		t.Errorf("RevalidationExplainTimeoutMs = %d, want %d",
+			tu.RevalidationExplainTimeoutMs,
+			DefaultTunerRevalidationExplainTimeoutMs)
+	}
+
+	if tu.StaleStatsEstimateSkew !=
+		DefaultTunerStaleStatsEstimateSkew {
+		t.Errorf("StaleStatsEstimateSkew = %f, want %f",
+			tu.StaleStatsEstimateSkew,
+			DefaultTunerStaleStatsEstimateSkew)
+	}
+	if tu.StaleStatsEstimateSkew <= 0 {
+		t.Error("StaleStatsEstimateSkew must be > 0 " +
+			"(zero would flag every plan node)")
+	}
+
+	if tu.StaleStatsModRatio != DefaultTunerStaleStatsModRatio {
+		t.Errorf("StaleStatsModRatio = %f, want %f",
+			tu.StaleStatsModRatio, DefaultTunerStaleStatsModRatio)
+	}
+
+	if tu.StaleStatsAgeMinutes !=
+		DefaultTunerStaleStatsAgeMinutes {
+		t.Errorf("StaleStatsAgeMinutes = %d, want %d",
+			tu.StaleStatsAgeMinutes,
+			DefaultTunerStaleStatsAgeMinutes)
+	}
+
+	if tu.AnalyzeMaxTableMB != DefaultTunerAnalyzeMaxTableMB {
+		t.Errorf("AnalyzeMaxTableMB = %d, want %d",
+			tu.AnalyzeMaxTableMB, DefaultTunerAnalyzeMaxTableMB)
+	}
+
+	if tu.AnalyzeCooldownMinutes !=
+		DefaultTunerAnalyzeCooldownMinutes {
+		t.Errorf("AnalyzeCooldownMinutes = %d, want %d",
+			tu.AnalyzeCooldownMinutes,
+			DefaultTunerAnalyzeCooldownMinutes)
+	}
+
+	if tu.AnalyzeMaintenanceThresholdMB !=
+		DefaultTunerAnalyzeMaintenanceThresholdMB {
+		t.Errorf("AnalyzeMaintenanceThresholdMB = %d, want %d",
+			tu.AnalyzeMaintenanceThresholdMB,
+			DefaultTunerAnalyzeMaintenanceThresholdMB)
+	}
+
+	if tu.AnalyzeTimeoutMs != DefaultTunerAnalyzeTimeoutMs {
+		t.Errorf("AnalyzeTimeoutMs = %d, want %d",
+			tu.AnalyzeTimeoutMs, DefaultTunerAnalyzeTimeoutMs)
+	}
+	if tu.AnalyzeTimeoutMs == 0 {
+		t.Error("AnalyzeTimeoutMs must not be 0 " +
+			"(would cause immediate timeout)")
+	}
+
+	if tu.MaxConcurrentAnalyze !=
+		DefaultTunerMaxConcurrentAnalyze {
+		t.Errorf("MaxConcurrentAnalyze = %d, want %d",
+			tu.MaxConcurrentAnalyze,
+			DefaultTunerMaxConcurrentAnalyze)
+	}
+}
+
+// TestDefaultConfig_OptimizerLLMTimeoutAdequate verifies the optimizer
+// LLM timeout is high enough for thinking models that may take 60-120s
+// to produce a response with internal reasoning.
+func TestDefaultConfig_OptimizerLLMTimeoutAdequate(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.LLM.OptimizerLLM.TimeoutSeconds < 60 {
+		t.Errorf("OptimizerLLM.TimeoutSeconds = %d, want >= 60 "+
+			"(thinking models need longer timeouts)",
+			cfg.LLM.OptimizerLLM.TimeoutSeconds)
+	}
+}
+
+// TestDefaultConfig_AnalyzerWorkMemPromotion verifies the v0.8.5
+// work_mem promotion threshold has a sane default.
+func TestDefaultConfig_AnalyzerWorkMemPromotion(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.Analyzer.WorkMemPromotionThreshold !=
+		DefaultAnalyzerWorkMemPromotionThreshold {
+		t.Errorf("WorkMemPromotionThreshold = %d, want %d",
+			cfg.Analyzer.WorkMemPromotionThreshold,
+			DefaultAnalyzerWorkMemPromotionThreshold)
+	}
+}
+
 // TestDefaultConfig_TrustLevel verifies the trust level defaults
 // to the safest value.
 func TestDefaultConfig_TrustLevel(t *testing.T) {

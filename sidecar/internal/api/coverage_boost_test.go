@@ -2075,57 +2075,48 @@ func TestCoverage_TestConnectionPreview_MalformedJSON(
 	}
 }
 
-func TestCoverage_TestConnectionPreview_EmptyRequest(
+func TestCoverage_TestConnectionPreview_UnresolvableHost(
 	t *testing.T,
 ) {
-	// Empty host/port defaults: port=5432, ssl=require.
-	// testFromConnString will fail connecting since there's
-	// no real DB, but the handler should still respond.
+	// Unresolvable hosts are blocked (fail-closed SSRF).
 	handler := testConnectionPreviewHandler()
 	w := doRequest(handler, "POST",
 		"/api/v1/databases/managed/test-connection",
 		`{"host":"invalid-host-that-wont-resolve",
 		  "database_name":"db","username":"u","password":"p"}`)
-	// Should return 200 with error status (connection test).
-	if w.Code != http.StatusOK {
-		t.Fatalf("status: got %d, want 200", w.Code)
-	}
-	var resp ConnectionTestResult
-	json.NewDecoder(w.Body).Decode(&resp)
-	if resp.Status != "error" {
-		t.Errorf("status: got %q, want error", resp.Status)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400", w.Code)
 	}
 }
 
 func TestCoverage_TestConnectionPreview_DefaultPort(
 	t *testing.T,
 ) {
+	// Port 0 defaults to 5432, sslmode defaults to "require".
+	// Unresolvable host is blocked by fail-closed SSRF check.
 	handler := testConnectionPreviewHandler()
-	// Port 0 should default to 5432, sslmode empty defaults
-	// to "require". Use a non-resolvable host so SSRF check
-	// passes (returns false on lookup error) and the
-	// connection attempt fails naturally.
 	w := doRequest(handler, "POST",
 		"/api/v1/databases/managed/test-connection",
 		`{"host":"nonexistent.invalid","port":0,
 		  "database_name":"nonexistent","username":"u",
 		  "password":"p"}`)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status: got %d, want 200", w.Code)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400", w.Code)
 	}
 }
 
 func TestCoverage_TestConnectionPreview_CustomSSL(
 	t *testing.T,
 ) {
+	// Unresolvable host + custom sslmode: still blocked.
 	handler := testConnectionPreviewHandler()
 	w := doRequest(handler, "POST",
 		"/api/v1/databases/managed/test-connection",
 		`{"host":"nonexistent.invalid","port":5432,
 		  "database_name":"db","username":"u",
 		  "password":"p","sslmode":"disable"}`)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status: got %d, want 200", w.Code)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400", w.Code)
 	}
 }
 

@@ -430,3 +430,15 @@ func coerceValue(key, value string) any {
 	}
 	return value
 }
+
+// AllowedConfigKeysSnapshot returns a shallow copy of the
+// allowedConfigKeys registry (key -> validation type). Exported
+// so cross-package consistency tests can iterate the registry
+// without duplicating it.
+func AllowedConfigKeysSnapshot() map[string]string {
+	cp := make(map[string]string, len(allowedConfigKeys))
+	for k, v := range allowedConfigKeys {
+		cp[k] = v
+	}
+	return cp
+}

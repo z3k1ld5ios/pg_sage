@@ -35,7 +35,7 @@ func NewPagerDuty(
 // Name returns the channel identifier.
 func (p *PagerDutyChannel) Name() string { return "pagerduty" }
 
-// Send dispatches an alert to PagerDuty.
+// Send dispatches an alert to PagerDuty with retry.
 func (p *PagerDutyChannel) Send(
 	ctx context.Context, alert Alert,
 ) error {
@@ -43,7 +43,48 @@ func (p *PagerDutyChannel) Send(
 	if err != nil {
 		return fmt.Errorf("build pagerduty payload: %w", err)
 	}
+	return p.sendWithRetry(ctx, payload)
+}
 
+func (p *PagerDutyChannel) sendWithRetry(
+	ctx context.Context, payload []byte,
+) error {
+	const maxAttempts = 3
+	backoff := 1 * time.Second
+
+	var lastErr error
+	for i := range maxAttempts {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("pagerduty send cancelled: %w",
+				err)
+		}
+
+		lastErr = p.doPost(ctx, payload)
+		if lastErr == nil {
+			return nil
+		}
+
+		if i < maxAttempts-1 {
+			p.logFn("WARN", "pagerduty retry %d/%d: %v",
+				i+1, maxAttempts, lastErr)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return fmt.Errorf(
+					"pagerduty send cancelled: %w",
+					ctx.Err())
+			}
+			backoff *= 2
+		}
+	}
+	return fmt.Errorf(
+		"pagerduty send failed after %d attempts: %w",
+		maxAttempts, lastErr)
+}
+
+func (p *PagerDutyChannel) doPost(
+	ctx context.Context, payload []byte,
+) error {
 	req, err := http.NewRequestWithContext(
 		ctx, http.MethodPost, pdEventsURL,
 		bytes.NewReader(payload),

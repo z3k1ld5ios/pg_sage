@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useAPI } from '../hooks/useAPI'
 import { LoadingSpinner } from '../components/LoadingSpinner'
 import { ErrorBanner } from '../components/ErrorBanner'
+import { TokenBudgetBanner } from '../components/TokenBudgetBanner'
 import { ConfigTooltip } from '../components/ConfigTooltip'
 import {
   ShieldAlert, Play, Save, RotateCcw, Check, X,
@@ -298,6 +299,7 @@ function SimpleMonitoringTab(props) {
 function SimpleAIAlertsTab(props) {
   return (
     <div className="space-y-6">
+      <TokenBudgetBanner />
       <div>
         <SectionHeading>AI Analysis</SectionHeading>
         <Field
@@ -863,6 +865,7 @@ function ModelField({ getVal, setVal, getSource, resetField, help }) {
 function LLMTab(props) {
   return (
     <div className="space-y-6">
+      <TokenBudgetBanner />
       <div>
         <h3 className="text-sm font-medium mb-3"
           style={{ color: 'var(--text-secondary)' }}>LLM</h3>

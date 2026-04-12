@@ -64,7 +64,7 @@ func wireRouter(p WireParams) WireResult {
 		}
 	}
 
-	// DatabaseDeps: meta-db → standalone → nil.
+	// DatabaseDeps: meta-db → standalone → fleet → nil.
 	var dbDeps *api.DatabaseDeps
 	if p.MetaState != nil && p.MetaState.Store != nil {
 		metaState := p.MetaState
@@ -78,6 +78,17 @@ func wireRouter(p WireParams) WireResult {
 	} else if p.Pool != nil {
 		dbDeps = &api.DatabaseDeps{
 			Store: store.NewDatabaseStore(p.Pool, nil),
+		}
+	} else if p.FleetMgr != nil {
+		// Fleet mode without meta-db: use the primary fleet
+		// pool (which has sage.databases bootstrapped by
+		// initFleetMultiDB → registerFleetDatabases).
+		fleetPool := p.FleetMgr.PoolForDatabase("all")
+		if fleetPool != nil {
+			dbDeps = &api.DatabaseDeps{
+				Store: store.NewDatabaseStore(fleetPool, nil),
+				Fleet: p.FleetMgr,
+			}
 		}
 	}
 

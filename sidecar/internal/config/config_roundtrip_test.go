@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -724,6 +725,413 @@ func TestDefaultConfig_NonZeroFields(t *testing.T) {
 	assertEqualBool(t, "AutoExplain.Enabled", cfg.AutoExplain.Enabled, true)
 	assertEqualInt(t, "AutoExplain.LogMinDurationMs",
 		cfg.AutoExplain.LogMinDurationMs, DefaultAutoExplainLogMinDuration)
+}
+
+// TestYAMLDecode_KnownFields_RejectsUnknownKeys uses yaml.Decoder with
+// KnownFields(true) to verify that every key in a fully-populated YAML
+// document maps to a real struct field. This catches silent drops where
+// a key is misspelled or placed under the wrong parent.
+func TestYAMLDecode_KnownFields_RejectsUnknownKeys(t *testing.T) {
+	// Valid YAML that should decode without error.
+	validYAML := `
+mode: standalone
+postgres:
+  host: localhost
+  port: 5432
+  user: sage
+  password: pass
+  database: testdb
+  sslmode: prefer
+  max_connections: 2
+  database_url: ""
+collector:
+  interval_seconds: 60
+  batch_size: 1000
+  max_queries: 500
+analyzer:
+  interval_seconds: 600
+  slow_query_threshold_ms: 1000
+  seq_scan_min_rows: 100000
+  unused_index_window_days: 7
+  index_bloat_threshold_pct: 30
+  table_bloat_dead_tuple_pct: 20
+  table_bloat_min_rows: 1000
+  idle_in_transaction_timeout_minutes: 30
+  cache_hit_ratio_warning: 0.95
+  xid_wraparound_warning: 500000000
+  xid_wraparound_critical: 1000000000
+  regression_threshold_pct: 50
+  regression_lookback_days: 7
+  checkpoint_frequency_warning_per_hour: 12
+  work_mem_promotion_threshold: 5
+safety:
+  cpu_ceiling_pct: 90
+  query_timeout_ms: 500
+  ddl_timeout_seconds: 300
+  disk_pressure_threshold_pct: 5
+  backoff_consecutive_skips: 3
+  dormant_interval_seconds: 600
+  lock_timeout_ms: 30000
+trust:
+  level: observation
+  ramp_start: ""
+  maintenance_window: ""
+  tier3_safe: true
+  tier3_moderate: false
+  tier3_high_risk: false
+  rollback_threshold_pct: 10
+  rollback_window_minutes: 15
+  rollback_cooldown_days: 7
+  cascade_cooldown_cycles: 3
+llm:
+  enabled: false
+  endpoint: ""
+  api_key: ""
+  model: ""
+  timeout_seconds: 30
+  token_budget_daily: 500000
+  context_budget_tokens: 8192
+  cooldown_seconds: 300
+  optimizer:
+    enabled: false
+    min_query_calls: 100
+    max_indexes_per_table: 10
+    max_new_per_table: 3
+    max_include_columns: 3
+    over_indexed_ratio_pct: 150
+    write_heavy_ratio_pct: 70
+    min_snapshots: 3
+    hypopg_min_improvement_pct: 15.0
+    plan_source: hypopg
+    confidence_threshold: 0.5
+    write_impact_threshold_pct: 20.0
+  optimizer_llm:
+    enabled: false
+    endpoint: ""
+    api_key: ""
+    model: ""
+    timeout_seconds: 120
+    token_budget_daily: 500000
+    cooldown_seconds: 300
+    max_output_tokens: 16384
+    fallback_to_general: true
+advisor:
+  enabled: false
+  interval_seconds: 3600
+  vacuum_enabled: true
+  wal_enabled: true
+  connection_enabled: true
+  memory_enabled: true
+  rewrite_enabled: true
+  bloat_enabled: true
+briefing:
+  schedule: "0 6 * * *"
+  channels: ["stdout"]
+  slack_webhook_url: ""
+alerting:
+  enabled: false
+  check_interval_seconds: 60
+  cooldown_minutes: 15
+  quiet_hours_start: ""
+  quiet_hours_end: ""
+  timezone: UTC
+  slack_webhook_url: ""
+  pagerduty_routing_key: ""
+auto_explain:
+  enabled: true
+  log_min_duration_ms: 1000
+  collect_interval_seconds: 300
+  max_plans_per_cycle: 100
+  prefer_session_load: true
+forecaster:
+  enabled: true
+  lookback_days: 30
+  disk_warn_growth_gb_day: 5.0
+  connection_warn_pct: 80.0
+  cache_warn_threshold: 0.95
+  sequence_warn_days: 90
+  sequence_critical_days: 30
+tuner:
+  enabled: true
+  llm_enabled: false
+  work_mem_max_mb: 512
+  plan_time_ratio: 3.0
+  nested_loop_row_threshold: 10000
+  parallel_min_table_rows: 1000000
+  min_query_calls: 100
+  verify_after_apply: true
+  hint_retirement_days: 14
+  revalidation_interval_hours: 24
+  revalidation_keep_ratio: 1.2
+  revalidation_rollback_ratio: 0.8
+  revalidation_explain_timeout_ms: 10000
+  stale_stats_estimate_skew: 10.0
+  stale_stats_mod_ratio: 0.1
+  stale_stats_age_minutes: 60
+  analyze_max_table_mb: 10240
+  analyze_cooldown_minutes: 60
+  analyze_maintenance_threshold_mb: 1024
+  analyze_timeout_ms: 600000
+  max_concurrent_analyze: 1
+retention:
+  snapshots_days: 90
+  findings_days: 180
+  actions_days: 365
+  explains_days: 90
+prometheus:
+  listen_addr: "0.0.0.0:9187"
+oauth:
+  enabled: false
+  provider: google
+  client_id: ""
+  client_secret: ""
+  redirect_url: ""
+  issuer_url: ""
+  default_role: viewer
+api:
+  listen_addr: "0.0.0.0:8080"
+meta_db: ""
+encryption_key: ""
+`
+
+	dec := yaml.NewDecoder(strings.NewReader(validYAML))
+	dec.KnownFields(true)
+	var cfg Config
+	if err := dec.Decode(&cfg); err != nil {
+		t.Fatalf("KnownFields decode of valid YAML failed: %v "+
+			"(a struct field is missing its yaml tag or a key "+
+			"is misspelled)", err)
+	}
+
+	// Also verify a document with a typo IS rejected.
+	typoYAML := `
+mode: standalone
+postgress:
+  host: localhost
+`
+	dec2 := yaml.NewDecoder(strings.NewReader(typoYAML))
+	dec2.KnownFields(true)
+	var cfg2 Config
+	if err := dec2.Decode(&cfg2); err == nil {
+		t.Error("KnownFields should reject unknown key " +
+			"'postgress' (note double s)")
+	}
+}
+
+// TestYAMLRoundTrip_OAuthFields verifies OAuth sub-struct round-trips.
+func TestYAMLRoundTrip_OAuthFields(t *testing.T) {
+	original := Config{
+		OAuth: OAuthConfig{
+			Enabled:      true,
+			Provider:     "google",
+			ClientID:     "client-123",
+			ClientSecret: "secret-456",
+			RedirectURL:  "https://example.com/callback",
+			IssuerURL:    "https://accounts.google.com",
+			DefaultRole:  "viewer",
+		},
+	}
+
+	data, err := yaml.Marshal(&original)
+	if err != nil {
+		t.Fatalf("yaml.Marshal failed: %v", err)
+	}
+
+	var roundtripped Config
+	if err := yaml.Unmarshal(data, &roundtripped); err != nil {
+		t.Fatalf("yaml.Unmarshal failed: %v", err)
+	}
+
+	assertEqualBool(t, "OAuth.Enabled",
+		roundtripped.OAuth.Enabled, true)
+	assertEqual(t, "OAuth.Provider",
+		roundtripped.OAuth.Provider, "google")
+	assertEqual(t, "OAuth.ClientID",
+		roundtripped.OAuth.ClientID, "client-123")
+	assertEqual(t, "OAuth.ClientSecret",
+		roundtripped.OAuth.ClientSecret, "secret-456")
+	assertEqual(t, "OAuth.RedirectURL",
+		roundtripped.OAuth.RedirectURL, "https://example.com/callback")
+	assertEqual(t, "OAuth.IssuerURL",
+		roundtripped.OAuth.IssuerURL, "https://accounts.google.com")
+	assertEqual(t, "OAuth.DefaultRole",
+		roundtripped.OAuth.DefaultRole, "viewer")
+}
+
+// TestYAMLRoundTrip_FleetFields verifies fleet mode sub-structs
+// (Databases, Defaults, API) round-trip correctly.
+func TestYAMLRoundTrip_FleetFields(t *testing.T) {
+	boolTrue := true
+	boolFalse := false
+	original := Config{
+		Mode: "fleet",
+		Databases: []DatabaseConfig{
+			{
+				Name:                     "prod-primary",
+				Host:                     "db1.prod",
+				Port:                     5432,
+				User:                     "sage",
+				Password:                 "secret",
+				Database:                 "app",
+				SSLMode:                  "require",
+				MaxConnections:           3,
+				Tags:                     []string{"tier=prod", "team=payments"},
+				TrustLevel:               "advisory",
+				ExecutorEnabled:          &boolTrue,
+				LLMEnabled:               &boolFalse,
+				CollectorIntervalSeconds: 30,
+				AnalyzerIntervalSeconds:  600,
+			},
+		},
+		Defaults: DefaultsConfig{
+			MaxConnections:           2,
+			TrustLevel:               "observation",
+			CollectorIntervalSeconds: 60,
+			AnalyzerIntervalSeconds:  300,
+		},
+		API: APIConfig{
+			ListenAddr: "0.0.0.0:8080",
+		},
+	}
+
+	data, err := yaml.Marshal(&original)
+	if err != nil {
+		t.Fatalf("yaml.Marshal failed: %v", err)
+	}
+
+	var rt Config
+	if err := yaml.Unmarshal(data, &rt); err != nil {
+		t.Fatalf("yaml.Unmarshal failed: %v", err)
+	}
+
+	// Databases
+	if len(rt.Databases) != 1 {
+		t.Fatalf("Databases length = %d, want 1", len(rt.Databases))
+	}
+	db := rt.Databases[0]
+	assertEqual(t, "Databases[0].Name", db.Name, "prod-primary")
+	assertEqual(t, "Databases[0].Host", db.Host, "db1.prod")
+	assertEqualInt(t, "Databases[0].Port", db.Port, 5432)
+	assertEqual(t, "Databases[0].User", db.User, "sage")
+	assertEqual(t, "Databases[0].Password", db.Password, "secret")
+	assertEqual(t, "Databases[0].Database", db.Database, "app")
+	assertEqual(t, "Databases[0].SSLMode", db.SSLMode, "require")
+	assertEqualInt(t, "Databases[0].MaxConnections",
+		db.MaxConnections, 3)
+	if len(db.Tags) != 2 {
+		t.Errorf("Databases[0].Tags length = %d, want 2",
+			len(db.Tags))
+	}
+	assertEqual(t, "Databases[0].TrustLevel",
+		db.TrustLevel, "advisory")
+	if db.ExecutorEnabled == nil || !*db.ExecutorEnabled {
+		t.Error("Databases[0].ExecutorEnabled should be true")
+	}
+	if db.LLMEnabled == nil || *db.LLMEnabled {
+		t.Error("Databases[0].LLMEnabled should be false")
+	}
+	assertEqualInt(t, "Databases[0].CollectorIntervalSeconds",
+		db.CollectorIntervalSeconds, 30)
+	assertEqualInt(t, "Databases[0].AnalyzerIntervalSeconds",
+		db.AnalyzerIntervalSeconds, 600)
+
+	// Defaults
+	assertEqualInt(t, "Defaults.MaxConnections",
+		rt.Defaults.MaxConnections, 2)
+	assertEqual(t, "Defaults.TrustLevel",
+		rt.Defaults.TrustLevel, "observation")
+	assertEqualInt(t, "Defaults.CollectorIntervalSeconds",
+		rt.Defaults.CollectorIntervalSeconds, 60)
+	assertEqualInt(t, "Defaults.AnalyzerIntervalSeconds",
+		rt.Defaults.AnalyzerIntervalSeconds, 300)
+
+	// API
+	assertEqual(t, "API.ListenAddr",
+		rt.API.ListenAddr, "0.0.0.0:8080")
+}
+
+// TestYAMLRoundTrip_TunerV085Fields verifies the v0.8.5 tuner fields
+// (hint revalidation + stale stats) survive YAML round-trip.
+func TestYAMLRoundTrip_TunerV085Fields(t *testing.T) {
+	original := Config{
+		Tuner: TunerConfig{
+			Enabled:                       true,
+			VerifyAfterApply:              true,
+			HintRetirementDays:            14,
+			RevalidationIntervalHours:     24,
+			RevalidationKeepRatio:         1.2,
+			RevalidationRollbackRatio:     0.8,
+			RevalidationExplainTimeoutMs:  10000,
+			StaleStatsEstimateSkew:        10.0,
+			StaleStatsModRatio:            0.1,
+			StaleStatsAgeMinutes:          60,
+			AnalyzeMaxTableMB:             10240,
+			AnalyzeCooldownMinutes:        60,
+			AnalyzeMaintenanceThresholdMB: 1024,
+			AnalyzeTimeoutMs:              600000,
+			MaxConcurrentAnalyze:          1,
+		},
+	}
+
+	data, err := yaml.Marshal(&original)
+	if err != nil {
+		t.Fatalf("yaml.Marshal failed: %v", err)
+	}
+
+	var rt Config
+	if err := yaml.Unmarshal(data, &rt); err != nil {
+		t.Fatalf("yaml.Unmarshal failed: %v", err)
+	}
+
+	assertEqualInt(t, "Tuner.HintRetirementDays",
+		rt.Tuner.HintRetirementDays, 14)
+	assertEqualInt(t, "Tuner.RevalidationIntervalHours",
+		rt.Tuner.RevalidationIntervalHours, 24)
+	assertEqualFloat(t, "Tuner.RevalidationKeepRatio",
+		rt.Tuner.RevalidationKeepRatio, 1.2)
+	assertEqualFloat(t, "Tuner.RevalidationRollbackRatio",
+		rt.Tuner.RevalidationRollbackRatio, 0.8)
+	assertEqualInt(t, "Tuner.RevalidationExplainTimeoutMs",
+		rt.Tuner.RevalidationExplainTimeoutMs, 10000)
+	assertEqualFloat(t, "Tuner.StaleStatsEstimateSkew",
+		rt.Tuner.StaleStatsEstimateSkew, 10.0)
+	assertEqualFloat(t, "Tuner.StaleStatsModRatio",
+		rt.Tuner.StaleStatsModRatio, 0.1)
+	assertEqualInt(t, "Tuner.StaleStatsAgeMinutes",
+		rt.Tuner.StaleStatsAgeMinutes, 60)
+	assertEqualInt64(t, "Tuner.AnalyzeMaxTableMB",
+		rt.Tuner.AnalyzeMaxTableMB, 10240)
+	assertEqualInt(t, "Tuner.AnalyzeCooldownMinutes",
+		rt.Tuner.AnalyzeCooldownMinutes, 60)
+	assertEqualInt64(t, "Tuner.AnalyzeMaintenanceThresholdMB",
+		rt.Tuner.AnalyzeMaintenanceThresholdMB, 1024)
+	assertEqualInt(t, "Tuner.AnalyzeTimeoutMs",
+		rt.Tuner.AnalyzeTimeoutMs, 600000)
+	assertEqualInt(t, "Tuner.MaxConcurrentAnalyze",
+		rt.Tuner.MaxConcurrentAnalyze, 1)
+}
+
+// TestYAMLRoundTrip_AnalyzerV085Field verifies the work_mem_promotion_threshold
+// field survives round-trip.
+func TestYAMLRoundTrip_AnalyzerV085Field(t *testing.T) {
+	original := Config{
+		Analyzer: AnalyzerConfig{
+			WorkMemPromotionThreshold: 5,
+		},
+	}
+
+	data, err := yaml.Marshal(&original)
+	if err != nil {
+		t.Fatalf("yaml.Marshal failed: %v", err)
+	}
+
+	var rt Config
+	if err := yaml.Unmarshal(data, &rt); err != nil {
+		t.Fatalf("yaml.Unmarshal failed: %v", err)
+	}
+
+	assertEqualInt(t, "Analyzer.WorkMemPromotionThreshold",
+		rt.Analyzer.WorkMemPromotionThreshold, 5)
 }
 
 // --- Test helpers (stdlib only, matching existing test style) ---

@@ -18,14 +18,51 @@ type loginRateLimiter struct {
 	attempts map[string][]time.Time
 }
 
-var loginLimiter = &loginRateLimiter{
-	attempts: make(map[string][]time.Time),
-}
+var loginLimiter = newLoginRateLimiter()
 
 const (
 	loginMaxAttempts = 5
 	loginWindow      = 15 * time.Minute
+	loginMaxEntries  = 10000
+	loginCleanupFreq = 5 * time.Minute
 )
+
+func newLoginRateLimiter() *loginRateLimiter {
+	l := &loginRateLimiter{
+		attempts: make(map[string][]time.Time),
+	}
+	go l.cleanupLoop()
+	return l
+}
+
+// cleanupLoop periodically purges expired entries to bound
+// memory growth from distributed login spray attacks.
+func (l *loginRateLimiter) cleanupLoop() {
+	ticker := time.NewTicker(loginCleanupFreq)
+	defer ticker.Stop()
+	for range ticker.C {
+		l.purgeExpired()
+	}
+}
+
+func (l *loginRateLimiter) purgeExpired() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	cutoff := time.Now().Add(-loginWindow)
+	for email, attempts := range l.attempts {
+		valid := attempts[:0]
+		for _, t := range attempts {
+			if t.After(cutoff) {
+				valid = append(valid, t)
+			}
+		}
+		if len(valid) == 0 {
+			delete(l.attempts, email)
+		} else {
+			l.attempts[email] = valid
+		}
+	}
+}
 
 // allow returns true if the email is not rate-limited.
 // It prunes expired entries on each call.
@@ -49,6 +86,10 @@ func (l *loginRateLimiter) allow(email string) bool {
 func (l *loginRateLimiter) record(email string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	// Cap total entries to bound memory under spray attacks.
+	if len(l.attempts) >= loginMaxEntries {
+		return
+	}
 	l.attempts[email] = append(
 		l.attempts[email], time.Now())
 }

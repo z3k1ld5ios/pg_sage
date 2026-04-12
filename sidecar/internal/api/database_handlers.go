@@ -233,12 +233,18 @@ func testConnectionPreviewHandler() http.HandlerFunc {
 			return
 		}
 
-		// SSRF protection: reject private/internal IPs and
-		// cloud metadata endpoints.
-		if isBlockedHost(req.Host) {
+		// SSRF protection: reject private/internal IPs,
+		// cloud metadata endpoints, and unresolvable hosts.
+		switch checkHost(req.Host) {
+		case hostBlocked:
 			jsonError(w,
 				"connections to private/internal addresses "+
 					"are not allowed",
+				http.StatusBadRequest)
+			return
+		case hostDNSFailed:
+			jsonError(w,
+				"could not resolve hostname",
 				http.StatusBadRequest)
 			return
 		}
@@ -267,26 +273,39 @@ func testConnectionPreviewHandler() http.HandlerFunc {
 	}
 }
 
-// isBlockedHost returns true if the host resolves to a
-// private, loopback, link-local, or cloud metadata address.
-func isBlockedHost(host string) bool {
+// hostCheckResult describes why a host was blocked.
+type hostCheckResult int
+
+const (
+	hostAllowed    hostCheckResult = iota
+	hostBlocked                    // private/internal IP
+	hostDNSFailed                  // DNS resolution failed
+)
+
+// checkHost resolves the host and returns whether it
+// should be blocked for SSRF protection.
+func checkHost(host string) hostCheckResult {
 	// Block known metadata hostnames.
 	if host == "169.254.169.254" ||
 		host == "metadata.google.internal" {
-		return true
+		return hostBlocked
 	}
 
 	ip := net.ParseIP(host)
 	if ip != nil {
-		return ip.IsLoopback() || ip.IsPrivate() ||
+		if ip.IsLoopback() || ip.IsPrivate() ||
 			ip.IsLinkLocalUnicast() ||
-			ip.IsLinkLocalMulticast()
+			ip.IsLinkLocalMulticast() {
+			return hostBlocked
+		}
+		return hostAllowed
 	}
 
-	// Resolve hostname and check all IPs.
+	// Resolve hostname and check all IPs. Fail closed on
+	// DNS errors to prevent DNS rebinding attacks.
 	addrs, err := net.LookupHost(host)
 	if err != nil {
-		return false // let the connection attempt fail naturally
+		return hostDNSFailed
 	}
 	for _, addr := range addrs {
 		resolved := net.ParseIP(addr)
@@ -296,16 +315,23 @@ func isBlockedHost(host string) bool {
 		if resolved.IsLoopback() || resolved.IsPrivate() ||
 			resolved.IsLinkLocalUnicast() ||
 			resolved.IsLinkLocalMulticast() {
-			return true
+			return hostBlocked
 		}
 	}
-	return false
+	return hostAllowed
+}
+
+// isBlockedHost is a convenience wrapper for existing callers.
+func isBlockedHost(host string) bool {
+	return checkHost(host) != hostAllowed
 }
 
 func importCSVHandler(
 	deps *DatabaseDeps,
 ) http.HandlerFunc {
+	const maxUpload = 5 << 20 // 5 MB total upload limit
 	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxUpload)
 		if err := r.ParseMultipartForm(1 << 20); err != nil {
 			jsonError(w, "invalid multipart form",
 				http.StatusBadRequest)

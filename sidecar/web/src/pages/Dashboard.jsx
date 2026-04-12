@@ -3,6 +3,7 @@ import { StatusDot } from '../components/StatusDot'
 import { SeverityBadge } from '../components/SeverityBadge'
 import { LoadingSpinner } from '../components/LoadingSpinner'
 import { ErrorBanner } from '../components/ErrorBanner'
+import { TokenBudgetBanner } from '../components/TokenBudgetBanner'
 import {
   CheckCircle, Clock, ListChecks, Server,
 } from 'lucide-react'
@@ -215,12 +216,13 @@ export function Dashboard({ database }) {
 
   const { summary, databases } = data
 
-  if (summary.total_databases === 0) {
+  if (!summary || summary.total_databases === 0) {
     return <OnboardingWelcome />
   }
 
   return (
     <div className="space-y-6">
+      <TokenBudgetBanner />
       <HealthHero summary={summary} />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

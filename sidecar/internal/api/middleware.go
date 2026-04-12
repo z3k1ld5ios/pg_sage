@@ -38,7 +38,10 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 // isAllowedOrigin returns true for same-origin (empty) or
-// localhost origins used during development.
+// localhost origins used during development. Note: the session
+// cookie has Secure: true, but browsers treat localhost as a
+// "potentially trustworthy" origin (W3C Secure Contexts spec),
+// so Secure cookies are sent over http://localhost.
 func isAllowedOrigin(origin string) bool {
 	if origin == "" {
 		return false

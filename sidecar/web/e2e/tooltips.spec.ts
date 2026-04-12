@@ -8,10 +8,20 @@
 // Plan reference: docs/plan_v0.8.5.md §7.5.
 
 import { test, expect } from '@playwright/test'
+import { mockAllAPIs } from './fixtures'
 
 test.describe('Config tooltips', () => {
+  test.beforeEach(async ({ page }) => {
+    await mockAllAPIs(page)
+  })
+
   test('trust.level label opens a tooltip on hover', async ({ page }) => {
-    await page.goto('/settings')
+    await page.goto('#/settings')
+
+    // Trust Level is on the Monitoring tab in simple mode.
+    await page.locator(
+      '[data-testid="settings-tab-monitoring"]',
+    ).click()
 
     const trigger = page.locator(
       '[data-config-key="trust.level"]',
@@ -29,7 +39,12 @@ test.describe('Config tooltips', () => {
   test('every documented trigger has non-empty tooltip copy', async ({
     page,
   }) => {
-    await page.goto('/settings')
+    await page.goto('#/settings')
+
+    // Switch to Monitoring tab where config fields with tooltips are.
+    await page.locator(
+      '[data-testid="settings-tab-monitoring"]',
+    ).click()
 
     const triggers = page.locator('[data-config-key]')
     const count = await triggers.count()

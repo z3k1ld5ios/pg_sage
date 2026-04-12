@@ -474,3 +474,211 @@ func TestGlobalPut_RoundTrip_PersistsToStore(t *testing.T) {
 			ciMap["source"])
 	}
 }
+
+// TestP2_ConfigGlobalPut_CompleteFrontendPayload sends a realistic
+// payload spanning ALL config sections the frontend may send in a
+// single save. Verifies PUT returns 200, then GET returns all
+// fields with correct values and source=override.
+func TestP2_ConfigGlobalPut_CompleteFrontendPayload(
+	t *testing.T,
+) {
+	cs, user := contractSetup(t)
+	cfg := &config.Config{
+		Mode: "standalone",
+		Collector: config.CollectorConfig{
+			IntervalSeconds: 60,
+			BatchSize:       1000,
+			MaxQueries:      250,
+		},
+		Analyzer: config.AnalyzerConfig{
+			IntervalSeconds:      300,
+			SlowQueryThresholdMs: 1000,
+			UnusedIndexWindowDays: 7,
+		},
+		Trust: config.TrustConfig{
+			Level: "observation",
+		},
+		Safety: config.SafetyConfig{
+			CPUCeilingPct:     80,
+			QueryTimeoutMs:    5000,
+			DDLTimeoutSeconds: 30,
+			LockTimeoutMs:     500,
+		},
+		LLM: config.LLMConfig{
+			Enabled:             false,
+			Endpoint:            "",
+			Model:               "gpt-4o-mini",
+			TimeoutSeconds:      30,
+			TokenBudgetDaily:    100000,
+			ContextBudgetTokens: 4096,
+			Optimizer: config.OptimizerConfig{
+				Enabled:        false,
+				MinQueryCalls:  10,
+				MaxNewPerTable: 3,
+			},
+		},
+		Advisor: config.AdvisorConfig{
+			Enabled:         false,
+			IntervalSeconds: 300,
+		},
+		Alerting: config.AlertingConfig{
+			Enabled:              false,
+			CheckIntervalSeconds: 300,
+			CooldownMinutes:      60,
+		},
+		Retention: config.RetentionConfig{
+			SnapshotsDays: 7,
+			FindingsDays:  30,
+			ActionsDays:   90,
+			ExplainsDays:  14,
+		},
+	}
+
+	putHandler := configGlobalPutHandler(cs, cfg, nil)
+	getHandler := configGlobalGetHandler(cs, cfg)
+
+	// Send a realistic payload mixing ALL overridable sections
+	// plus execution_mode (which should be silently stripped).
+	body := `{
+		"execution_mode": "auto",
+		"collector.interval_seconds": "15",
+		"collector.batch_size": "500",
+		"collector.max_queries": "100",
+		"analyzer.slow_query_threshold_ms": "200",
+		"analyzer.unused_index_window_days": "21",
+		"trust.level": "autonomous",
+		"trust.tier3_safe": "true",
+		"trust.maintenance_window": "Sun 02:00-06:00",
+		"trust.rollback_threshold_pct": "15",
+		"safety.cpu_ceiling_pct": "95",
+		"safety.query_timeout_ms": "10000",
+		"safety.ddl_timeout_seconds": "120",
+		"safety.lock_timeout_ms": "2000",
+		"llm.enabled": "true",
+		"llm.endpoint": "https://api.openai.com/v1",
+		"llm.model": "gpt-4o",
+		"llm.timeout_seconds": "60",
+		"llm.token_budget_daily": "200000",
+		"llm.context_budget_tokens": "8192",
+		"llm.optimizer.enabled": "true",
+		"llm.optimizer.min_query_calls": "3",
+		"llm.optimizer.max_new_per_table": "5",
+		"advisor.enabled": "true",
+		"advisor.interval_seconds": "120",
+		"alerting.enabled": "true",
+		"alerting.slack_webhook_url": "https://hooks.slack.com/all",
+		"alerting.check_interval_seconds": "60",
+		"alerting.cooldown_minutes": "30",
+		"alerting.quiet_hours_start": "23:00",
+		"alerting.quiet_hours_end": "07:00",
+		"retention.snapshots_days": "14",
+		"retention.findings_days": "60",
+		"retention.actions_days": "180",
+		"retention.explains_days": "30"
+	}`
+
+	w := doRequestWithUser(
+		putHandler, "PUT", "/api/v1/config/global",
+		body, user)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT status: got %d, want 200; body: %s",
+			w.Code, w.Body.String())
+	}
+
+	// Verify hot-reload applied all fields.
+	if cfg.Collector.IntervalSeconds != 15 {
+		t.Errorf("collector.interval: got %d, want 15",
+			cfg.Collector.IntervalSeconds)
+	}
+	if cfg.Trust.Level != "autonomous" {
+		t.Errorf("trust.level: got %q, want autonomous",
+			cfg.Trust.Level)
+	}
+	if !cfg.LLM.Enabled {
+		t.Error("llm.enabled: got false, want true")
+	}
+	if !cfg.Advisor.Enabled {
+		t.Error("advisor.enabled: got false, want true")
+	}
+	if !cfg.Alerting.Enabled {
+		t.Error("alerting.enabled: got false, want true")
+	}
+
+	// GET and verify all overridden keys are source=override.
+	w = doRequest(
+		getHandler, "GET", "/api/v1/config/global", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET status: got %d, want 200; body: %s",
+			w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Config map[string]any `json:"config"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// Verify a representative set of fields from each section.
+	checks := map[string]struct {
+		wantVal    any
+		wantSource string
+	}{
+		"collector.interval_seconds": {
+			float64(15), "override"},
+		"collector.batch_size": {
+			float64(500), "override"},
+		"analyzer.slow_query_threshold_ms": {
+			float64(200), "override"},
+		"analyzer.unused_index_window_days": {
+			float64(21), "override"},
+		"trust.level": {
+			"autonomous", "override"},
+		"trust.tier3_safe": {
+			true, "override"},
+		"safety.cpu_ceiling_pct": {
+			float64(95), "override"},
+		"safety.lock_timeout_ms": {
+			float64(2000), "override"},
+		"llm.enabled": {
+			true, "override"},
+		"llm.model": {
+			"gpt-4o", "override"},
+		"llm.optimizer.enabled": {
+			true, "override"},
+		"advisor.enabled": {
+			true, "override"},
+		"advisor.interval_seconds": {
+			float64(120), "override"},
+		"alerting.enabled": {
+			true, "override"},
+		"alerting.check_interval_seconds": {
+			float64(60), "override"},
+		"retention.snapshots_days": {
+			float64(14), "override"},
+		"retention.explains_days": {
+			float64(30), "override"},
+	}
+
+	for key, want := range checks {
+		entry, ok := resp.Config[key]
+		if !ok {
+			t.Errorf("GET missing key: %s", key)
+			continue
+		}
+		m, ok := entry.(map[string]any)
+		if !ok {
+			t.Errorf("%s: expected map, got %T", key, entry)
+			continue
+		}
+		if m["value"] != want.wantVal {
+			t.Errorf("%s value: got %v (%T), want %v",
+				key, m["value"], m["value"], want.wantVal)
+		}
+		if m["source"] != want.wantSource {
+			t.Errorf("%s source: got %v, want %s",
+				key, m["source"], want.wantSource)
+		}
+	}
+}

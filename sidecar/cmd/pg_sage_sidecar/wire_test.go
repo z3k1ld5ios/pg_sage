@@ -108,6 +108,25 @@ func TestWireRouter_Fleet_ActionDepsFromFleet(t *testing.T) {
 	}
 }
 
+func TestWireRouter_Fleet_DBDepsFromFleetPool(t *testing.T) {
+	cfg := testConfig()
+	cfg.Mode = "fleet"
+	fm := testFleetMgr(cfg)
+
+	// Empty fleet (no instances) → PoolForDatabase("all") returns
+	// nil → dbDeps stays nil (can't wire without a pool).
+	result := wireRouter(WireParams{
+		Cfg:      cfg,
+		FleetMgr: fm,
+	})
+	if result.DBDeps != nil {
+		t.Error("dbDeps should be nil when fleet has no pools")
+	}
+	// With a real fleet pool (has sage.databases table),
+	// the fleet path would wire dbDeps with Store + Fleet.
+	// Can't test the positive case without a real pgxpool.
+}
+
 func TestWireRouter_MetaDB_DBDepsFromStore(t *testing.T) {
 	cfg := testConfig()
 	cfg.Mode = "fleet"
