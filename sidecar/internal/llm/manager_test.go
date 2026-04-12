@@ -150,6 +150,48 @@ func TestTokenStatus_ResetTimestamp(t *testing.T) {
 	}
 }
 
+func TestResetBudgets_DualClient(t *testing.T) {
+	gen := testClient("general")
+	opt := testClient("optimizer")
+	gen.budgetResetDay = time.Now().YearDay()
+	gen.tokensUsedToday.Store(5000)
+	opt.budgetResetDay = time.Now().YearDay()
+	opt.tokensUsedToday.Store(3000)
+	m := NewManager(gen, opt, false)
+
+	if !gen.IsBudgetExhausted() || !opt.IsBudgetExhausted() {
+		t.Fatal("precondition: both should be exhausted")
+	}
+
+	m.ResetBudgets()
+
+	if gen.TokensUsedToday() != 0 {
+		t.Errorf("general tokens = %d, want 0", gen.TokensUsedToday())
+	}
+	if opt.TokensUsedToday() != 0 {
+		t.Errorf("optimizer tokens = %d, want 0", opt.TokensUsedToday())
+	}
+	if gen.IsBudgetExhausted() {
+		t.Error("general should not be exhausted after reset")
+	}
+	if opt.IsBudgetExhausted() {
+		t.Error("optimizer should not be exhausted after reset")
+	}
+}
+
+func TestResetBudgets_NilOptimizer(t *testing.T) {
+	gen := testClient("general")
+	gen.budgetResetDay = time.Now().YearDay()
+	gen.tokensUsedToday.Store(5000)
+	m := NewManager(gen, nil, false)
+
+	m.ResetBudgets() // should not panic
+
+	if gen.TokensUsedToday() != 0 {
+		t.Errorf("general tokens = %d, want 0", gen.TokensUsedToday())
+	}
+}
+
 func TestTokenStatus_ClientDisabled(t *testing.T) {
 	cfg := &config.LLMConfig{
 		Enabled:          false,

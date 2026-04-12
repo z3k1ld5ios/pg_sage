@@ -32,6 +32,14 @@ var expectedTables = []struct {
 
 // Bootstrap acquires an advisory lock, then ensures the sage schema and
 // all required tables exist. It never drops existing objects.
+//
+// v0.8.5 — Bootstrap now folds in MigrateConfigSchema as a final step so
+// every caller receives a fully-migrated sage.config (with database_id /
+// updated_by_user_id columns) and a live sage.config_audit table. Before
+// this change, any code path that dropped + re-bootstrapped the schema
+// (notably the schema-package tests) left sage.config_audit missing,
+// which caused unrelated integration tests elsewhere to fail intermittently
+// when run in parallel.
 func Bootstrap(ctx context.Context, pool *pgxpool.Pool) error {
 	if err := acquireAdvisoryLock(ctx, pool); err != nil {
 		return err
@@ -43,10 +51,19 @@ func Bootstrap(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 
 	if !exists {
-		return createFullSchema(ctx, pool)
+		if err := createFullSchema(ctx, pool); err != nil {
+			return err
+		}
+	} else {
+		if err := ensureTablesExist(ctx, pool); err != nil {
+			return err
+		}
 	}
 
-	return ensureTablesExist(ctx, pool)
+	if err := MigrateConfigSchema(ctx, pool); err != nil {
+		return fmt.Errorf("config migration: %w", err)
+	}
+	return nil
 }
 
 // ReleaseAdvisoryLock releases the pg_sage advisory lock.
@@ -225,6 +242,7 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 		ddlActionLogApprovalCols,
 		ddlUsersOAuth,
 		ddlQueryHintsRewrite,
+		ddlQueryHintsRevalidate,
 	}
 	for _, m := range migrations {
 		if _, err := pool.Exec(qctx, m); err != nil {
@@ -247,7 +265,7 @@ CREATE SCHEMA IF NOT EXISTS sage;
 	ddlNotificationChannels + ddlNotificationRules +
 	ddlNotificationLog + ddlActionQueue +
 	ddlActionLogApprovalCols + ddlUsersOAuth +
-	ddlQueryHintsRewrite
+	ddlQueryHintsRewrite + ddlQueryHintsRevalidate
 
 const ddlActionLog = `
 CREATE TABLE IF NOT EXISTS sage.action_log (
@@ -457,4 +475,17 @@ ALTER TABLE sage.query_hints
     ADD COLUMN IF NOT EXISTS suggested_rewrite TEXT DEFAULT '';
 ALTER TABLE sage.query_hints
     ADD COLUMN IF NOT EXISTS rewrite_rationale TEXT DEFAULT '';
+`
+
+// ddlQueryHintsRevalidate adds the two columns the Feature 1 revalidation
+// loop needs to detect dead queryids (calls_at_last_check) and throttle how
+// often a hint is re-examined (last_revalidated_at).
+const ddlQueryHintsRevalidate = `
+ALTER TABLE sage.query_hints
+    ADD COLUMN IF NOT EXISTS calls_at_last_check BIGINT;
+ALTER TABLE sage.query_hints
+    ADD COLUMN IF NOT EXISTS last_revalidated_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_query_hints_revalidate
+    ON sage.query_hints (last_revalidated_at NULLS FIRST)
+    WHERE status = 'active';
 `

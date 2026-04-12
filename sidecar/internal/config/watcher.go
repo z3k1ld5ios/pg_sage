@@ -281,6 +281,110 @@ func applyHotReload(target, fresh *Config) []string {
 		changed = append(changed, "tuner.verify_after_apply")
 	}
 
+	// v0.8.5 Feature 1 — Hint revalidation loop.
+	if fresh.Tuner.HintRetirementDays != 0 &&
+		fresh.Tuner.HintRetirementDays !=
+			target.Tuner.HintRetirementDays {
+		target.Tuner.HintRetirementDays =
+			fresh.Tuner.HintRetirementDays
+		changed = append(changed, "tuner.hint_retirement_days")
+	}
+	if fresh.Tuner.RevalidationIntervalHours != 0 &&
+		fresh.Tuner.RevalidationIntervalHours !=
+			target.Tuner.RevalidationIntervalHours {
+		target.Tuner.RevalidationIntervalHours =
+			fresh.Tuner.RevalidationIntervalHours
+		changed = append(changed, "tuner.revalidation_interval_hours")
+	}
+	if fresh.Tuner.RevalidationKeepRatio != 0 &&
+		fresh.Tuner.RevalidationKeepRatio !=
+			target.Tuner.RevalidationKeepRatio {
+		target.Tuner.RevalidationKeepRatio =
+			fresh.Tuner.RevalidationKeepRatio
+		changed = append(changed, "tuner.revalidation_keep_ratio")
+	}
+	if fresh.Tuner.RevalidationRollbackRatio != 0 &&
+		fresh.Tuner.RevalidationRollbackRatio !=
+			target.Tuner.RevalidationRollbackRatio {
+		target.Tuner.RevalidationRollbackRatio =
+			fresh.Tuner.RevalidationRollbackRatio
+		changed = append(changed, "tuner.revalidation_rollback_ratio")
+	}
+	if fresh.Tuner.RevalidationExplainTimeoutMs != 0 &&
+		fresh.Tuner.RevalidationExplainTimeoutMs !=
+			target.Tuner.RevalidationExplainTimeoutMs {
+		target.Tuner.RevalidationExplainTimeoutMs =
+			fresh.Tuner.RevalidationExplainTimeoutMs
+		changed = append(changed, "tuner.revalidation_explain_timeout_ms")
+	}
+
+	// v0.8.5 Feature 2 — Stale-stats detection + ANALYZE.
+	if fresh.Tuner.StaleStatsEstimateSkew != 0 &&
+		fresh.Tuner.StaleStatsEstimateSkew !=
+			target.Tuner.StaleStatsEstimateSkew {
+		target.Tuner.StaleStatsEstimateSkew =
+			fresh.Tuner.StaleStatsEstimateSkew
+		changed = append(changed, "tuner.stale_stats_estimate_skew")
+	}
+	if fresh.Tuner.StaleStatsModRatio != 0 &&
+		fresh.Tuner.StaleStatsModRatio !=
+			target.Tuner.StaleStatsModRatio {
+		target.Tuner.StaleStatsModRatio =
+			fresh.Tuner.StaleStatsModRatio
+		changed = append(changed, "tuner.stale_stats_mod_ratio")
+	}
+	if fresh.Tuner.StaleStatsAgeMinutes != 0 &&
+		fresh.Tuner.StaleStatsAgeMinutes !=
+			target.Tuner.StaleStatsAgeMinutes {
+		target.Tuner.StaleStatsAgeMinutes =
+			fresh.Tuner.StaleStatsAgeMinutes
+		changed = append(changed, "tuner.stale_stats_age_minutes")
+	}
+	if fresh.Tuner.AnalyzeMaxTableMB != 0 &&
+		fresh.Tuner.AnalyzeMaxTableMB !=
+			target.Tuner.AnalyzeMaxTableMB {
+		target.Tuner.AnalyzeMaxTableMB =
+			fresh.Tuner.AnalyzeMaxTableMB
+		changed = append(changed, "tuner.analyze_max_table_mb")
+	}
+	if fresh.Tuner.AnalyzeCooldownMinutes != 0 &&
+		fresh.Tuner.AnalyzeCooldownMinutes !=
+			target.Tuner.AnalyzeCooldownMinutes {
+		target.Tuner.AnalyzeCooldownMinutes =
+			fresh.Tuner.AnalyzeCooldownMinutes
+		changed = append(changed, "tuner.analyze_cooldown_minutes")
+	}
+	if fresh.Tuner.AnalyzeMaintenanceThresholdMB != 0 &&
+		fresh.Tuner.AnalyzeMaintenanceThresholdMB !=
+			target.Tuner.AnalyzeMaintenanceThresholdMB {
+		target.Tuner.AnalyzeMaintenanceThresholdMB =
+			fresh.Tuner.AnalyzeMaintenanceThresholdMB
+		changed = append(changed, "tuner.analyze_maintenance_threshold_mb")
+	}
+	if fresh.Tuner.AnalyzeTimeoutMs != 0 &&
+		fresh.Tuner.AnalyzeTimeoutMs !=
+			target.Tuner.AnalyzeTimeoutMs {
+		target.Tuner.AnalyzeTimeoutMs =
+			fresh.Tuner.AnalyzeTimeoutMs
+		changed = append(changed, "tuner.analyze_timeout_ms")
+	}
+	if fresh.Tuner.MaxConcurrentAnalyze != 0 &&
+		fresh.Tuner.MaxConcurrentAnalyze !=
+			target.Tuner.MaxConcurrentAnalyze {
+		target.Tuner.MaxConcurrentAnalyze =
+			fresh.Tuner.MaxConcurrentAnalyze
+		changed = append(changed, "tuner.max_concurrent_analyze")
+	}
+
+	// v0.8.5 Feature 3 — work_mem role-promotion advisor.
+	if fresh.Analyzer.WorkMemPromotionThreshold != 0 &&
+		fresh.Analyzer.WorkMemPromotionThreshold !=
+			target.Analyzer.WorkMemPromotionThreshold {
+		target.Analyzer.WorkMemPromotionThreshold =
+			fresh.Analyzer.WorkMemPromotionThreshold
+		changed = append(changed, "analyzer.work_mem_promotion_threshold")
+	}
+
 	// auto_explain fields.
 	if fresh.AutoExplain.LogMinDurationMs != 0 &&
 		fresh.AutoExplain.LogMinDurationMs !=

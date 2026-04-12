@@ -1,0 +1,868 @@
+{
+  "advisor.bloat_enabled": {
+    "type": "bool",
+    "default": true,
+    "doc": ""
+  },
+  "advisor.connection_enabled": {
+    "type": "bool",
+    "default": true,
+    "doc": ""
+  },
+  "advisor.enabled": {
+    "type": "bool",
+    "default": false,
+    "doc": ""
+  },
+  "advisor.interval_seconds": {
+    "type": "int",
+    "default": 86400,
+    "doc": ""
+  },
+  "advisor.memory_enabled": {
+    "type": "bool",
+    "default": true,
+    "doc": ""
+  },
+  "advisor.rewrite_enabled": {
+    "type": "bool",
+    "default": true,
+    "doc": ""
+  },
+  "advisor.vacuum_enabled": {
+    "type": "bool",
+    "default": true,
+    "doc": ""
+  },
+  "advisor.wal_enabled": {
+    "type": "bool",
+    "default": true,
+    "doc": ""
+  },
+  "alerting.check_interval_seconds": {
+    "type": "int",
+    "default": 60,
+    "doc": ""
+  },
+  "alerting.cooldown_minutes": {
+    "type": "int",
+    "default": 15,
+    "doc": ""
+  },
+  "alerting.enabled": {
+    "type": "bool",
+    "default": false,
+    "doc": ""
+  },
+  "alerting.pagerduty_routing_key": {
+    "type": "string",
+    "default": "",
+    "doc": ""
+  },
+  "alerting.quiet_hours_end": {
+    "type": "string",
+    "default": "",
+    "doc": ""
+  },
+  "alerting.quiet_hours_start": {
+    "type": "string",
+    "default": "",
+    "doc": ""
+  },
+  "alerting.routes[].channels": {
+    "type": "[]string",
+    "default": null,
+    "doc": ""
+  },
+  "alerting.routes[].severity": {
+    "type": "string",
+    "default": "",
+    "doc": ""
+  },
+  "alerting.slack_webhook_url": {
+    "type": "string",
+    "default": "",
+    "doc": ""
+  },
+  "alerting.timezone": {
+    "type": "string",
+    "default": "UTC",
+    "doc": ""
+  },
+  "alerting.webhooks[].headers": {
+    "type": "map[string]string",
+    "default": null,
+    "doc": ""
+  },
+  "alerting.webhooks[].name": {
+    "type": "string",
+    "default": "",
+    "doc": ""
+  },
+  "alerting.webhooks[].url": {
+    "type": "string",
+    "default": "",
+    "doc": ""
+  },
+  "analyzer.cache_hit_ratio_warning": {
+    "type": "float64",
+    "default": 0.95,
+    "doc": "Warn when the shared buffers cache hit ratio falls below this fraction (0.0-1.0). Low ratios suggest shared_buffers is under-sized or working set is too large."
+  },
+  "analyzer.checkpoint_frequency_warning_per_hour": {
+    "type": "int",
+    "default": 12,
+    "doc": "Warn when checkpoints occur more than this many times per hour. High frequency indicates max_wal_size is too small."
+  },
+  "analyzer.idle_in_transaction_timeout_minutes": {
+    "type": "int",
+    "default": 30,
+    "doc": "Report sessions sitting in 'idle in transaction' longer than this. Long idle-in-tx sessions block vacuum and hold locks."
+  },
+  "analyzer.index_bloat_threshold_pct": {
+    "type": "int",
+    "default": 30,
+    "doc": "Minimum bloat percentage (0-100) an index must exhibit before it becomes a REINDEX candidate."
+  },
+  "analyzer.interval_seconds": {
+    "type": "int",
+    "default": 600,
+    "doc": "How often the analyzer runs its rule checks, in seconds. Lower values detect issues faster but add load."
+  },
+  "analyzer.regression_lookback_days": {
+    "type": "int",
+    "default": 7,
+    "doc": "How many days of pg_stat_statements history the regression detector compares against."
+  },
+  "analyzer.regression_threshold_pct": {
+    "type": "int",
+    "default": 50,
+    "doc": "Percent latency regression required before a query is flagged as a regressor. Set low for sensitive detection, higher to reduce noise."
+  },
+  "analyzer.seq_scan_min_rows": {
+    "type": "int",
+    "default": 100000,
+    "doc": "Minimum table row count before a sequential scan is reported as a finding. Below this, a seq scan is usually cheaper than an index lookup."
+  },
+  "analyzer.slow_query_threshold_ms": {
+    "type": "int",
+    "default": 1000,
+    "doc": "Queries with mean_exec_time above this are considered slow and become candidates for optimization findings."
+  },
+  "analyzer.table_bloat_dead_tuple_pct": {
+    "type": "int",
+    "default": 20,
+    "doc": "Dead-tuple percentage threshold for reporting table bloat. Above this the analyzer emits a vacuum or repack finding."
+  },
+  "analyzer.table_bloat_min_rows": {
+    "type": "int",
+    "default": 1000,
+    "doc": "Minimum row count before a table is considered for bloat analysis. Tiny tables are noisy and not worth reporting."
+  },
+  "analyzer.unused_index_window_days": {
+    "type": "int",
+    "default": 7,
+    "doc": "An index must be unused (idx_scan=0) for at least this many days before the analyzer suggests dropping it. Default 7 days.",
+    "warning": "Setting this too low can recommend dropping indexes that support infrequent but critical queries (e.g. monthly reports)."
+  },
+  "analyzer.work_mem_promotion_threshold": {
+    "type": "int",
+    "default": 5,
+    "doc": "How many active work_mem hints a single role must accumulate before the analyzer recommends promoting work_mem at the role level via ALTER ROLE. Set 0 to disable the advisor."
+  },
+  "analyzer.xid_wraparound_critical": {
+    "type": "int64",
+    "default": 1000000000,
+    "doc": "Transaction age at which the analyzer escalates to critical severity. Normally ~1.5 billion — past this autovacuum will force emergency wraparound runs.",
+    "warning": "If this is hit, autovacuum enters aggressive mode and the database may eventually refuse writes."
+  },
+  "analyzer.xid_wraparound_warning": {
+    "type": "int64",
+    "default": 500000000,
+    "doc": "Transaction age at which the analyzer emits a wraparound warning. Normally ~200 million."
+  },
+  "api.listen_addr": {
+    "type": "string",
+    "default": "0.0.0.0:8080",
+    "doc": "Address the REST API and dashboard HTTP server binds to (host:port). Use :8080 to listen on all interfaces."
+  },
+  "auto_explain.collect_interval_seconds": {
+    "type": "int",
+    "default": 300,
+    "doc": ""
+  },
+  "auto_explain.enabled": {
+    "type": "bool",
+    "default": true,
+    "doc": ""
+  },
+  "auto_explain.log_min_duration_ms": {
+    "type": "int",
+    "default": 1000,
+    "doc": ""
+  },
+  "auto_explain.max_plans_per_cycle": {
+    "type": "int",
+    "default": 100,
+    "doc": ""
+  },
+  "auto_explain.prefer_session_load": {
+    "type": "bool",
+    "default": true,
+    "doc": ""
+  },
+  "briefing.channels": {
+    "type": "[]string",
+    "default": null,
+    "doc": ""
+  },
+  "briefing.schedule": {
+    "type": "string",
+    "default": "0 6 * * *",
+    "doc": ""
+  },
+  "briefing.slack_webhook_url": {
+    "type": "string",
+    "default": "",
+    "doc": ""
+  },
+  "collector.batch_size": {
+    "type": "int",
+    "default": 1000,
+    "doc": ""
+  },
+  "collector.interval_seconds": {
+    "type": "int",
+    "default": 60,
+    "doc": ""
+  },
+  "collector.max_queries": {
+    "type": "int",
+    "default": 500,
+    "doc": ""
+  },
+  "databases[].analyzer_interval_seconds": {
+    "type": "int",
+    "default": 0,
+    "doc": "Per-database analyzer interval override. Zero falls back to defaults.analyzer_interval_seconds.",
+    "mode": "fleet-only"
+  },
+  "databases[].collector_interval_seconds": {
+    "type": "int",
+    "default": 0,
+    "doc": "Per-database collector interval override. Zero falls back to defaults.collector_interval_seconds.",
+    "mode": "fleet-only"
+  },
+  "databases[].database": {
+    "type": "string",
+    "default": "",
+    "doc": "Database name on the target instance.",
+    "mode": "fleet-only"
+  },
+  "databases[].host": {
+    "type": "string",
+    "default": "",
+    "doc": "Hostname or IP of this fleet database.",
+    "mode": "fleet-only"
+  },
+  "databases[].max_connections": {
+    "type": "int",
+    "default": 0,
+    "doc": "Maximum connections the sidecar pgx pool opens to this database. Falls back to defaults.max_connections when zero.",
+    "mode": "fleet-only"
+  },
+  "databases[].name": {
+    "type": "string",
+    "default": "",
+    "doc": "Logical name for this database in fleet mode. Must be unique across the fleet.",
+    "mode": "fleet-only"
+  },
+  "databases[].password": {
+    "type": "string",
+    "default": null,
+    "doc": "Password for the login role. Encrypted at rest using encryption_key when persisted to the meta database.",
+    "mode": "fleet-only",
+    "secret": true
+  },
+  "databases[].port": {
+    "type": "int",
+    "default": 0,
+    "doc": "TCP port of this fleet database.",
+    "mode": "fleet-only"
+  },
+  "databases[].sslmode": {
+    "type": "string",
+    "default": "",
+    "doc": "libpq sslmode for this connection (disable, prefer, require, verify-ca, verify-full).",
+    "mode": "fleet-only"
+  },
+  "databases[].tags": {
+    "type": "[]string",
+    "default": null,
+    "doc": "Free-form tags used to group databases for fleet operations (e.g. tier=prod, team=payments).",
+    "mode": "fleet-only"
+  },
+  "databases[].trust_level": {
+    "type": "string",
+    "default": "",
+    "doc": "Per-database override of the global trust.level. Useful for running a pilot database in autonomous while the fleet stays in advisory.",
+    "mode": "fleet-only"
+  },
+  "databases[].user": {
+    "type": "string",
+    "default": "",
+    "doc": "Login role the sidecar uses to connect to this fleet database.",
+    "mode": "fleet-only"
+  },
+  "defaults.analyzer_interval_seconds": {
+    "type": "int",
+    "default": 0,
+    "doc": "Default analyzer interval applied to fleet databases that don't set their own value.",
+    "mode": "fleet-only"
+  },
+  "defaults.collector_interval_seconds": {
+    "type": "int",
+    "default": 0,
+    "doc": "Default collector interval applied to fleet databases that don't set their own value.",
+    "mode": "fleet-only"
+  },
+  "defaults.max_connections": {
+    "type": "int",
+    "default": 0,
+    "doc": "Default max_connections applied to fleet databases that don't set their own value.",
+    "mode": "fleet-only"
+  },
+  "defaults.trust_level": {
+    "type": "string",
+    "default": "",
+    "doc": "Default trust level applied to fleet databases. Falls back to the global trust.level when unset.",
+    "mode": "fleet-only"
+  },
+  "encryption_key": {
+    "type": "string",
+    "default": null,
+    "doc": "Passphrase used to encrypt sensitive fleet-mode fields (per-database passwords). Rotate via the key-rotation runbook.",
+    "secret": true
+  },
+  "forecaster.cache_warn_threshold": {
+    "type": "float64",
+    "default": 0.95,
+    "doc": ""
+  },
+  "forecaster.connection_warn_pct": {
+    "type": "float64",
+    "default": 80,
+    "doc": ""
+  },
+  "forecaster.disk_warn_growth_gb_day": {
+    "type": "float64",
+    "default": 5,
+    "doc": ""
+  },
+  "forecaster.enabled": {
+    "type": "bool",
+    "default": true,
+    "doc": ""
+  },
+  "forecaster.lookback_days": {
+    "type": "int",
+    "default": 30,
+    "doc": ""
+  },
+  "forecaster.sequence_critical_days": {
+    "type": "int",
+    "default": 30,
+    "doc": ""
+  },
+  "forecaster.sequence_warn_days": {
+    "type": "int",
+    "default": 90,
+    "doc": ""
+  },
+  "llm.api_key": {
+    "type": "string",
+    "default": null,
+    "doc": "Authentication token for the LLM provider. Prefer sourcing from environment via ${LLM_API_KEY} rather than committing literal values.",
+    "secret": true
+  },
+  "llm.context_budget_tokens": {
+    "type": "int",
+    "default": 8192,
+    "doc": "Maximum tokens attached as context (schema, stats, plans) to a single LLM request. Prevents oversized prompts from busting the model context window."
+  },
+  "llm.cooldown_seconds": {
+    "type": "int",
+    "default": 300,
+    "doc": "Minimum seconds between two LLM requests. Rate-limits the sidecar so it cannot burst the provider during a busy cycle."
+  },
+  "llm.enabled": {
+    "type": "bool",
+    "default": false,
+    "doc": "Global enable for LLM-assisted analysis (planner explanations, recommendation narratives). When disabled, pg_sage falls back to deterministic heuristics only."
+  },
+  "llm.endpoint": {
+    "type": "string",
+    "default": "",
+    "doc": "LLM provider base URL. Supports OpenAI-compatible chat-completions endpoints. Can be left blank to use the vendor default."
+  },
+  "llm.index_optimizer.enabled": {
+    "type": "bool",
+    "default": false,
+    "doc": ""
+  },
+  "llm.index_optimizer.max_include_columns": {
+    "type": "int",
+    "default": 3,
+    "doc": ""
+  },
+  "llm.index_optimizer.max_indexes_per_table": {
+    "type": "int",
+    "default": 10,
+    "doc": ""
+  },
+  "llm.index_optimizer.min_query_calls": {
+    "type": "int",
+    "default": 100,
+    "doc": ""
+  },
+  "llm.index_optimizer.over_indexed_ratio_pct": {
+    "type": "int",
+    "default": 150,
+    "doc": ""
+  },
+  "llm.index_optimizer.write_heavy_ratio_pct": {
+    "type": "int",
+    "default": 70,
+    "doc": ""
+  },
+  "llm.model": {
+    "type": "string",
+    "default": "",
+    "doc": "Model identifier sent to the provider (e.g. gpt-4o-mini). Must support JSON-mode responses for structured outputs."
+  },
+  "llm.optimizer.confidence_threshold": {
+    "type": "float64",
+    "default": 0.5,
+    "doc": ""
+  },
+  "llm.optimizer.enabled": {
+    "type": "bool",
+    "default": false,
+    "doc": ""
+  },
+  "llm.optimizer.hypopg_min_improvement_pct": {
+    "type": "float64",
+    "default": 10,
+    "doc": ""
+  },
+  "llm.optimizer.max_include_columns": {
+    "type": "int",
+    "default": 3,
+    "doc": ""
+  },
+  "llm.optimizer.max_indexes_per_table": {
+    "type": "int",
+    "default": 10,
+    "doc": ""
+  },
+  "llm.optimizer.max_new_per_table": {
+    "type": "int",
+    "default": 3,
+    "doc": ""
+  },
+  "llm.optimizer.min_query_calls": {
+    "type": "int",
+    "default": 100,
+    "doc": ""
+  },
+  "llm.optimizer.min_snapshots": {
+    "type": "int",
+    "default": 2,
+    "doc": ""
+  },
+  "llm.optimizer.over_indexed_ratio_pct": {
+    "type": "int",
+    "default": 150,
+    "doc": ""
+  },
+  "llm.optimizer.plan_source": {
+    "type": "string",
+    "default": "auto",
+    "doc": ""
+  },
+  "llm.optimizer.write_heavy_ratio_pct": {
+    "type": "int",
+    "default": 70,
+    "doc": ""
+  },
+  "llm.optimizer.write_impact_threshold_pct": {
+    "type": "float64",
+    "default": 15,
+    "doc": ""
+  },
+  "llm.optimizer_llm.api_key": {
+    "type": "string",
+    "default": null,
+    "doc": "API key for the optimizer LLM. Prefer env-var substitution over literal values.",
+    "secret": true
+  },
+  "llm.optimizer_llm.cooldown_seconds": {
+    "type": "int",
+    "default": 300,
+    "doc": "Minimum seconds between two optimizer LLM requests."
+  },
+  "llm.optimizer_llm.enabled": {
+    "type": "bool",
+    "default": false,
+    "doc": "Enable the dedicated reasoning-tier LLM used by the index optimizer. When false the optimizer falls back to the general llm.* client."
+  },
+  "llm.optimizer_llm.endpoint": {
+    "type": "string",
+    "default": "",
+    "doc": "Base URL for the optimizer LLM provider. Can differ from the general llm.endpoint when the reasoning tier lives on another provider."
+  },
+  "llm.optimizer_llm.fallback_to_general": {
+    "type": "bool",
+    "default": true,
+    "doc": "If true, fall back to the general llm.* client when the optimizer LLM is unavailable or over budget."
+  },
+  "llm.optimizer_llm.max_output_tokens": {
+    "type": "int",
+    "default": 8192,
+    "doc": "Upper bound on output tokens accepted from the optimizer LLM. Truncates runaway responses."
+  },
+  "llm.optimizer_llm.model": {
+    "type": "string",
+    "default": "",
+    "doc": "Reasoning-tier model identifier (e.g. o1-mini). Must return JSON when requested."
+  },
+  "llm.optimizer_llm.timeout_seconds": {
+    "type": "int",
+    "default": 120,
+    "doc": "Per-request timeout for optimizer LLM calls. Reasoning models typically need longer timeouts than chat models."
+  },
+  "llm.optimizer_llm.token_budget_daily": {
+    "type": "int",
+    "default": 500000,
+    "doc": "Daily token cap for the optimizer LLM — independent of the general llm.token_budget_daily so reasoning spend can be tracked separately."
+  },
+  "llm.timeout_seconds": {
+    "type": "int",
+    "default": 30,
+    "doc": "HTTP request timeout for each LLM call. Low values protect the analyzer cycle from slow providers; high values tolerate cold-start latency."
+  },
+  "llm.token_budget_daily": {
+    "type": "int",
+    "default": 500000,
+    "doc": "Soft daily cap on total tokens (input + output) the sidecar will spend on LLM requests. Once exceeded the LLM is skipped until the next UTC day."
+  },
+  "meta_db": {
+    "type": "string",
+    "default": "",
+    "doc": "DSN of the metadata database used in fleet mode to persist cross-target state. Blank in standalone mode."
+  },
+  "mode": {
+    "type": "string",
+    "default": "extension",
+    "doc": "Operating mode: extension, standalone, or fleet. Standalone connects to one PostgreSQL target; fleet manages many databases from one sidecar."
+  },
+  "oauth.client_id": {
+    "type": "string",
+    "default": "",
+    "doc": "OAuth client ID issued by the provider when the pg_sage application was registered."
+  },
+  "oauth.client_secret": {
+    "type": "string",
+    "default": null,
+    "doc": "OAuth client secret issued by the provider. Source from an environment variable in production.",
+    "secret": true
+  },
+  "oauth.default_role": {
+    "type": "string",
+    "default": "viewer",
+    "doc": "Role assigned to newly authenticated users when no role mapping rule matches."
+  },
+  "oauth.enabled": {
+    "type": "bool",
+    "default": false,
+    "doc": "Enable OAuth single sign-on for the sidecar UI. When false, the UI falls back to local auth."
+  },
+  "oauth.issuer_url": {
+    "type": "string",
+    "default": "",
+    "doc": "OIDC issuer URL used to discover the provider's authorization and token endpoints."
+  },
+  "oauth.provider": {
+    "type": "string",
+    "default": "",
+    "doc": "OAuth provider identifier. Supported values include google, github, okta, and generic OIDC."
+  },
+  "oauth.redirect_url": {
+    "type": "string",
+    "default": "",
+    "doc": "Absolute URL the provider redirects to after authentication. Must match the URI registered at the provider."
+  },
+  "postgres.database": {
+    "type": "string",
+    "default": "postgres",
+    "doc": "Target database name the sidecar connects to. Ignored when database_url is set."
+  },
+  "postgres.database_url": {
+    "type": "string",
+    "default": "",
+    "doc": "Full libpq connection URL. When set, overrides host/port/user/password/database/sslmode."
+  },
+  "postgres.host": {
+    "type": "string",
+    "default": "localhost",
+    "doc": "Hostname or IP of the target PostgreSQL instance. Ignored when database_url is set."
+  },
+  "postgres.max_connections": {
+    "type": "int",
+    "default": 2,
+    "doc": "Maximum connections the sidecar pgx pool will open to this target. Keep well below max_connections on the server."
+  },
+  "postgres.password": {
+    "type": "string",
+    "default": null,
+    "doc": "Password for the sidecar login role. Prefer environment-variable substitution or a secrets manager over committing literal values.",
+    "secret": true
+  },
+  "postgres.port": {
+    "type": "int",
+    "default": 5432,
+    "doc": "TCP port of the target PostgreSQL instance. Ignored when database_url is set."
+  },
+  "postgres.sslmode": {
+    "type": "string",
+    "default": "prefer",
+    "doc": "libpq sslmode string (disable, allow, prefer, require, verify-ca, verify-full). Use verify-full in production."
+  },
+  "postgres.user": {
+    "type": "string",
+    "default": "sage_agent",
+    "doc": "PostgreSQL login role used by the sidecar. Requires pg_read_all_stats plus write access to the sage schema."
+  },
+  "prometheus.listen_addr": {
+    "type": "string",
+    "default": "127.0.0.1:9187",
+    "doc": ""
+  },
+  "retention.actions_days": {
+    "type": "int",
+    "default": 365,
+    "doc": ""
+  },
+  "retention.explains_days": {
+    "type": "int",
+    "default": 90,
+    "doc": ""
+  },
+  "retention.findings_days": {
+    "type": "int",
+    "default": 180,
+    "doc": ""
+  },
+  "retention.snapshots_days": {
+    "type": "int",
+    "default": 90,
+    "doc": ""
+  },
+  "safety.backoff_consecutive_skips": {
+    "type": "int",
+    "default": 3,
+    "doc": "After this many consecutive skipped cycles (e.g. CPU ceiling hit repeatedly), enter dormant mode and slow the cadence until load subsides."
+  },
+  "safety.cpu_ceiling_pct": {
+    "type": "int",
+    "default": 90,
+    "doc": "Skip cycles when database-host CPU exceeds this percent (1-100). Prevents pg_sage from adding load during incidents."
+  },
+  "safety.ddl_timeout_seconds": {
+    "type": "int",
+    "default": 300,
+    "doc": "Timeout applied to DDL actions (CREATE INDEX, ALTER TABLE) executed by the executor. Per-statement ceiling, not per-cycle."
+  },
+  "safety.disk_pressure_threshold_pct": {
+    "type": "int",
+    "default": 5,
+    "doc": "When database data volume usage exceeds this percent, skip write-producing actions. Prevents adding indexes to a near-full volume."
+  },
+  "safety.dormant_interval_seconds": {
+    "type": "int",
+    "default": 600,
+    "doc": "Cycle interval (seconds) used while in dormant mode — typically much larger than the normal interval so the sidecar wakes rarely while the target is stressed."
+  },
+  "safety.lock_timeout_ms": {
+    "type": "int",
+    "default": 30000,
+    "doc": "lock_timeout applied to connections running DDL or ANALYZE. Must be \u003e 0 for ANALYZE actions in v0.8.5 — autovacuum can hold a ShareUpdateExclusiveLock indefinitely.",
+    "warning": "Zero disables the timeout entirely and is refused by the executor for ANALYZE actions."
+  },
+  "safety.query_timeout_ms": {
+    "type": "int",
+    "default": 500,
+    "doc": "statement_timeout applied to every collector and analyzer query issued by the sidecar. Protects the target from runaway introspection."
+  },
+  "trust.cascade_cooldown_cycles": {
+    "type": "int",
+    "default": 3,
+    "doc": "If N consecutive cycles each propose new actions, throttle to observe impact. Prevents storm-like cascades of small changes."
+  },
+  "trust.level": {
+    "type": "string",
+    "default": "observation",
+    "doc": "Autonomy tier. observation = log only; advisory = queue actions for approval; autonomous = execute safe/moderate actions directly.",
+    "warning": "Changing to autonomous enables DDL execution without human review."
+  },
+  "trust.maintenance_window": {
+    "type": "string",
+    "default": "",
+    "doc": "Cron-like window (e.g. 'Sun 02:00-06:00') during which heavy maintenance actions like ANALYZE on large tables or REINDEX are permitted."
+  },
+  "trust.ramp_start": {
+    "type": "string",
+    "default": "",
+    "doc": "RFC3339 timestamp when the trust ramp began. Auto-persisted on first startup if empty. Used to gate newly-supported actions behind a soak period."
+  },
+  "trust.rollback_cooldown_days": {
+    "type": "int",
+    "default": 7,
+    "doc": "After a rollback, the same action family is blocked for this many days to prevent flap. Default 3 days."
+  },
+  "trust.rollback_threshold_pct": {
+    "type": "int",
+    "default": 10,
+    "doc": "Latency regression percentage (0-100) that triggers automatic rollback of a recently applied action. Lower = more sensitive."
+  },
+  "trust.rollback_window_minutes": {
+    "type": "int",
+    "default": 15,
+    "doc": "How many minutes after applying an action pg_sage watches for regressions before considering it stable."
+  },
+  "trust.tier3_high_risk": {
+    "type": "bool",
+    "default": false,
+    "doc": "Enable tier-3 actions classified as high risk. Ignored outside fleet mode — standalone always forces this to false.",
+    "warning": "High-risk actions can destabilize production — enable only with a reviewed rollback plan.",
+    "mode": "fleet-only"
+  },
+  "trust.tier3_moderate": {
+    "type": "bool",
+    "default": false,
+    "doc": "Enable tier-3 actions classified as moderate risk (e.g. VACUUM FULL on small tables). Requires trust.level=autonomous.",
+    "warning": "Moderate actions can briefly lock tables."
+  },
+  "trust.tier3_safe": {
+    "type": "bool",
+    "default": true,
+    "doc": "Enable tier-3 actions classified as safe (e.g. CREATE INDEX CONCURRENTLY on small tables). Requires trust.level=autonomous."
+  },
+  "tuner.analyze_cooldown_minutes": {
+    "type": "int",
+    "default": 60,
+    "doc": "Minimum minutes between tuner-initiated ANALYZE runs on the same table. Also respects autovacuum last_analyze as a recent-run signal."
+  },
+  "tuner.analyze_maintenance_threshold_mb": {
+    "type": "int64",
+    "default": 1024,
+    "doc": "Tables larger than this many MB can only be ANALYZEd during the configured maintenance_window. Default 1024 (1GB)."
+  },
+  "tuner.analyze_max_table_mb": {
+    "type": "int64",
+    "default": 10240,
+    "doc": "Tables larger than this many MB are never auto-ANALYZEd — an advisory finding is emitted instead for operator review.",
+    "warning": "Default 10240 (10GB). Raise with care — ANALYZE on TB-scale tables can saturate I/O."
+  },
+  "tuner.analyze_timeout_ms": {
+    "type": "int",
+    "default": 600000,
+    "doc": "statement_timeout for ANALYZE actions. Default 600000 (10 minutes). Exceeding this marks the action failed_timeout and extends the cooldown."
+  },
+  "tuner.enabled": {
+    "type": "bool",
+    "default": true,
+    "doc": "Master switch for the per-query tuner. When false, no hints are written and Tune() is a no-op — the analyzer still runs."
+  },
+  "tuner.hint_retirement_days": {
+    "type": "int",
+    "default": 14,
+    "doc": "Hints older than this many days are retired unconditionally, regardless of current query behavior. Safety net against stale hint accumulation."
+  },
+  "tuner.llm_enabled": {
+    "type": "bool",
+    "default": false,
+    "doc": "Allow the tuner to call the LLM for hint prescription when deterministic rules do not produce a recommendation. Budget-gated by llm.token_budget_daily."
+  },
+  "tuner.max_concurrent_analyze": {
+    "type": "int",
+    "default": 1,
+    "doc": "Hard cap on concurrent ANALYZE actions across the entire sidecar process (shared semaphore — fleet-wide, not per-database). Default 1."
+  },
+  "tuner.min_query_calls": {
+    "type": "int",
+    "default": 100,
+    "doc": "Require at least this many pg_stat_statements.calls before the tuner will act on a query. Filters out one-offs."
+  },
+  "tuner.nested_loop_row_threshold": {
+    "type": "int64",
+    "default": 10000,
+    "doc": "Minimum actual-row count on a nested-loop inner that triggers the bad-nested-loop symptom. Smaller values increase sensitivity."
+  },
+  "tuner.parallel_min_table_rows": {
+    "type": "int64",
+    "default": 1000000,
+    "doc": "Threshold for suggesting parallel-enable hints on large sequential scans. Tables smaller than this are assumed not to benefit from parallelism."
+  },
+  "tuner.plan_time_ratio": {
+    "type": "float64",
+    "default": 3,
+    "doc": "When plan_time / exec_time exceeds this ratio, the tuner flags the query as plan-time-dominated and considers prepared-statement hints."
+  },
+  "tuner.revalidation_explain_timeout_ms": {
+    "type": "int",
+    "default": 10000,
+    "doc": "statement_timeout applied to EXPLAIN queries issued by the revalidation loop. Queries that cannot be explained in time are deferred."
+  },
+  "tuner.revalidation_interval_hours": {
+    "type": "int",
+    "default": 24,
+    "doc": "How often the hint revalidation loop runs. Set to 0 to disable the loop entirely. Default 24 hours."
+  },
+  "tuner.revalidation_keep_ratio": {
+    "type": "float64",
+    "default": 1.2,
+    "doc": "During cost comparison, hinted plan cost must be at most this ratio of the unhinted plan to keep the hint. Default 1.2 (hinted \u003c= 120% of unhinted)."
+  },
+  "tuner.revalidation_rollback_ratio": {
+    "type": "float64",
+    "default": 0.8,
+    "doc": "When hinted-plan cost exceeds unhinted by this ratio, the hint is marked broken and rolled back. Default 0.8 (hinted \u003e= 125% of unhinted)."
+  },
+  "tuner.stale_stats_age_minutes": {
+    "type": "int",
+    "default": 60,
+    "doc": "Both manual and autovacuum last_analyze must be older than this many minutes before the table is considered stale. Default 60."
+  },
+  "tuner.stale_stats_estimate_skew": {
+    "type": "float64",
+    "default": 10,
+    "doc": "Ratio ActualRows / PlanRows above which a plan node is considered row-estimate skewed. Default 10 — same threshold as the bad-nested-loop check."
+  },
+  "tuner.stale_stats_mod_ratio": {
+    "type": "float64",
+    "default": 0.1,
+    "doc": "Fraction of rows modified since last ANALYZE (n_mod_since_analyze / reltuples) required to treat a table as stale. Default 0.1 = 10%."
+  },
+  "tuner.verify_after_apply": {
+    "type": "bool",
+    "default": true,
+    "doc": "Run the daily hint revalidation loop. Removes hints that have become redundant, harmful, or broken. Requires pg_hint_plan.",
+    "warning": "v0.8.5 activates a real background cycle here — upgrade note: if you want v0.8.4 inert behavior, set this to false before upgrading."
+  },
+  "tuner.work_mem_max_mb": {
+    "type": "int",
+    "default": 512,
+    "doc": "Maximum per-query work_mem (MB) the tuner is allowed to prescribe via Set(work_mem) hints. Ceiling prevents runaway memory suggestions."
+  }
+}

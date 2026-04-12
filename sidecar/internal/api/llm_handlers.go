@@ -37,6 +37,27 @@ func listModelsHandler(
 	}
 }
 
+// llmBudgetResetHandler zeroes the daily token counter on all
+// LLM clients so calls resume immediately. Admin-only.
+func llmBudgetResetHandler(
+	mgr *llm.Manager,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		if mgr == nil {
+			jsonError(w,
+				"LLM not configured",
+				http.StatusServiceUnavailable)
+			return
+		}
+		mgr.ResetBudgets()
+		status := mgr.TokenStatus()
+		jsonResponse(w, map[string]any{
+			"reset":   true,
+			"clients": status,
+		})
+	}
+}
+
 // llmStatusHandler returns the current LLM token budget status
 // for all configured clients (general and optimizer).
 func llmStatusHandler(

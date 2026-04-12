@@ -314,6 +314,13 @@ func (c *Client) IsBudgetExhausted() bool {
 	return int(c.tokensUsedToday.Load()) >= c.cfg.TokenBudgetDaily
 }
 
+// ResetBudget zeroes the daily token counter, allowing LLM calls
+// to resume immediately instead of waiting for the next calendar day.
+func (c *Client) ResetBudget() {
+	c.tokensUsedToday.Store(0)
+	c.budgetResetDay = time.Now().YearDay()
+}
+
 // Model returns the configured model name.
 func (c *Client) Model() string {
 	return c.cfg.Model

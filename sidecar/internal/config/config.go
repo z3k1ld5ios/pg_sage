@@ -13,7 +13,7 @@ import (
 
 // Config is the top-level configuration for pg_sage standalone sidecar.
 type Config struct {
-	Mode string `yaml:"mode"` // "extension" or "standalone"
+	Mode string `yaml:"mode" doc:"Operating mode: extension, standalone, or fleet. Standalone connects to one PostgreSQL target; fleet manages many databases from one sidecar."`
 
 	Postgres   PostgresConfig   `yaml:"postgres"`
 	Collector  CollectorConfig  `yaml:"collector"`
@@ -37,8 +37,8 @@ type Config struct {
 	API       APIConfig        `yaml:"api"`
 
 	// Meta database and encryption (--meta-db, --encryption-key).
-	MetaDB        string `yaml:"meta_db"`
-	EncryptionKey string `yaml:"encryption_key"`
+	MetaDB        string `yaml:"meta_db" doc:"DSN of the metadata database used in fleet mode to persist cross-target state. Blank in standalone mode."`
+	EncryptionKey string `yaml:"encryption_key" doc:"Passphrase used to encrypt sensitive fleet-mode fields (per-database passwords). Rotate via the key-rotation runbook." secret:"true"`
 
 	// Legacy env-var fields (extension mode compat)
 	APIKey  string `yaml:"-"`
@@ -54,14 +54,14 @@ type Config struct {
 }
 
 type PostgresConfig struct {
-	Host           string `yaml:"host"`
-	Port           int    `yaml:"port"`
-	User           string `yaml:"user"`
-	Password       string `yaml:"password"`
-	Database       string `yaml:"database"`
-	SSLMode        string `yaml:"sslmode"`
-	MaxConnections int    `yaml:"max_connections"`
-	DatabaseURL    string `yaml:"database_url"` // overrides individual fields
+	Host           string `yaml:"host" doc:"Hostname or IP of the target PostgreSQL instance. Ignored when database_url is set."`
+	Port           int    `yaml:"port" doc:"TCP port of the target PostgreSQL instance. Ignored when database_url is set."`
+	User           string `yaml:"user" doc:"PostgreSQL login role used by the sidecar. Requires pg_read_all_stats plus write access to the sage schema."`
+	Password       string `yaml:"password" doc:"Password for the sidecar login role. Prefer environment-variable substitution or a secrets manager over committing literal values." secret:"true"`
+	Database       string `yaml:"database" doc:"Target database name the sidecar connects to. Ignored when database_url is set."`
+	SSLMode        string `yaml:"sslmode" doc:"libpq sslmode string (disable, allow, prefer, require, verify-ca, verify-full). Use verify-full in production."`
+	MaxConnections int    `yaml:"max_connections" doc:"Maximum connections the sidecar pgx pool will open to this target. Keep well below max_connections on the server."`
+	DatabaseURL    string `yaml:"database_url" doc:"Full libpq connection URL. When set, overrides host/port/user/password/database/sslmode."`
 }
 
 type CollectorConfig struct {
@@ -71,54 +71,59 @@ type CollectorConfig struct {
 }
 
 type AnalyzerConfig struct {
-	IntervalSeconds              int     `yaml:"interval_seconds"`
-	SlowQueryThresholdMs         int     `yaml:"slow_query_threshold_ms"`
-	SeqScanMinRows               int     `yaml:"seq_scan_min_rows"`
-	UnusedIndexWindowDays        int     `yaml:"unused_index_window_days"`
-	IndexBloatThresholdPct       int     `yaml:"index_bloat_threshold_pct"`
-	TableBloatDeadTuplePct       int     `yaml:"table_bloat_dead_tuple_pct"`
-	TableBloatMinRows            int     `yaml:"table_bloat_min_rows"`
-	IdleInTxTimeoutMinutes       int     `yaml:"idle_in_transaction_timeout_minutes"`
-	CacheHitRatioWarning         float64 `yaml:"cache_hit_ratio_warning"`
-	XIDWraparoundWarning         int64   `yaml:"xid_wraparound_warning"`
-	XIDWraparoundCritical        int64   `yaml:"xid_wraparound_critical"`
-	RegressionThresholdPct       int     `yaml:"regression_threshold_pct"`
-	RegressionLookbackDays       int     `yaml:"regression_lookback_days"`
-	CheckpointFreqWarningPerHour int     `yaml:"checkpoint_frequency_warning_per_hour"`
+	IntervalSeconds              int     `yaml:"interval_seconds" doc:"How often the analyzer runs its rule checks, in seconds. Lower values detect issues faster but add load."`
+	SlowQueryThresholdMs         int     `yaml:"slow_query_threshold_ms" doc:"Queries with mean_exec_time above this are considered slow and become candidates for optimization findings."`
+	SeqScanMinRows               int     `yaml:"seq_scan_min_rows" doc:"Minimum table row count before a sequential scan is reported as a finding. Below this, a seq scan is usually cheaper than an index lookup."`
+	UnusedIndexWindowDays        int     `yaml:"unused_index_window_days" doc:"An index must be unused (idx_scan=0) for at least this many days before the analyzer suggests dropping it. Default 7 days." warning:"Setting this too low can recommend dropping indexes that support infrequent but critical queries (e.g. monthly reports)."`
+	IndexBloatThresholdPct       int     `yaml:"index_bloat_threshold_pct" doc:"Minimum bloat percentage (0-100) an index must exhibit before it becomes a REINDEX candidate."`
+	TableBloatDeadTuplePct       int     `yaml:"table_bloat_dead_tuple_pct" doc:"Dead-tuple percentage threshold for reporting table bloat. Above this the analyzer emits a vacuum or repack finding."`
+	TableBloatMinRows            int     `yaml:"table_bloat_min_rows" doc:"Minimum row count before a table is considered for bloat analysis. Tiny tables are noisy and not worth reporting."`
+	IdleInTxTimeoutMinutes       int     `yaml:"idle_in_transaction_timeout_minutes" doc:"Report sessions sitting in 'idle in transaction' longer than this. Long idle-in-tx sessions block vacuum and hold locks."`
+	CacheHitRatioWarning         float64 `yaml:"cache_hit_ratio_warning" doc:"Warn when the shared buffers cache hit ratio falls below this fraction (0.0-1.0). Low ratios suggest shared_buffers is under-sized or working set is too large."`
+	XIDWraparoundWarning         int64   `yaml:"xid_wraparound_warning" doc:"Transaction age at which the analyzer emits a wraparound warning. Normally ~200 million."`
+	XIDWraparoundCritical        int64   `yaml:"xid_wraparound_critical" doc:"Transaction age at which the analyzer escalates to critical severity. Normally ~1.5 billion — past this autovacuum will force emergency wraparound runs." warning:"If this is hit, autovacuum enters aggressive mode and the database may eventually refuse writes."`
+	RegressionThresholdPct       int     `yaml:"regression_threshold_pct" doc:"Percent latency regression required before a query is flagged as a regressor. Set low for sensitive detection, higher to reduce noise."`
+	RegressionLookbackDays       int     `yaml:"regression_lookback_days" doc:"How many days of pg_stat_statements history the regression detector compares against."`
+	CheckpointFreqWarningPerHour int     `yaml:"checkpoint_frequency_warning_per_hour" doc:"Warn when checkpoints occur more than this many times per hour. High frequency indicates max_wal_size is too small."`
+
+	// v0.8.5 Feature 3 — work_mem role-promotion advisor.
+	// Threshold: how many hint applications in a 24h window on a single
+	// role/query_hash before promoting to a role-level work_mem finding.
+	WorkMemPromotionThreshold int `yaml:"work_mem_promotion_threshold" doc:"How many active work_mem hints a single role must accumulate before the analyzer recommends promoting work_mem at the role level via ALTER ROLE. Set 0 to disable the advisor."`
 }
 
 type SafetyConfig struct {
-	CPUCeilingPct            int `yaml:"cpu_ceiling_pct"`
-	QueryTimeoutMs           int `yaml:"query_timeout_ms"`
-	DDLTimeoutSeconds        int `yaml:"ddl_timeout_seconds"`
-	DiskPressureThresholdPct int `yaml:"disk_pressure_threshold_pct"`
-	BackoffConsecutiveSkips   int `yaml:"backoff_consecutive_skips"`
-	DormantIntervalSeconds   int `yaml:"dormant_interval_seconds"`
-	LockTimeoutMs            int `yaml:"lock_timeout_ms"`
+	CPUCeilingPct            int `yaml:"cpu_ceiling_pct" doc:"Skip cycles when database-host CPU exceeds this percent (1-100). Prevents pg_sage from adding load during incidents."`
+	QueryTimeoutMs           int `yaml:"query_timeout_ms" doc:"statement_timeout applied to every collector and analyzer query issued by the sidecar. Protects the target from runaway introspection."`
+	DDLTimeoutSeconds        int `yaml:"ddl_timeout_seconds" doc:"Timeout applied to DDL actions (CREATE INDEX, ALTER TABLE) executed by the executor. Per-statement ceiling, not per-cycle."`
+	DiskPressureThresholdPct int `yaml:"disk_pressure_threshold_pct" doc:"When database data volume usage exceeds this percent, skip write-producing actions. Prevents adding indexes to a near-full volume."`
+	BackoffConsecutiveSkips   int `yaml:"backoff_consecutive_skips" doc:"After this many consecutive skipped cycles (e.g. CPU ceiling hit repeatedly), enter dormant mode and slow the cadence until load subsides."`
+	DormantIntervalSeconds   int `yaml:"dormant_interval_seconds" doc:"Cycle interval (seconds) used while in dormant mode — typically much larger than the normal interval so the sidecar wakes rarely while the target is stressed."`
+	LockTimeoutMs            int `yaml:"lock_timeout_ms" doc:"lock_timeout applied to connections running DDL or ANALYZE. Must be > 0 for ANALYZE actions in v0.8.5 — autovacuum can hold a ShareUpdateExclusiveLock indefinitely." warning:"Zero disables the timeout entirely and is refused by the executor for ANALYZE actions."`
 }
 
 type TrustConfig struct {
-	Level                string `yaml:"level"` // observation, advisory, autonomous
-	RampStart            string `yaml:"ramp_start"`
-	MaintenanceWindow    string `yaml:"maintenance_window"`
-	Tier3Safe            bool   `yaml:"tier3_safe"`
-	Tier3Moderate        bool   `yaml:"tier3_moderate"`
-	Tier3HighRisk        bool   `yaml:"tier3_high_risk"`
-	RollbackThresholdPct int    `yaml:"rollback_threshold_pct"`
-	RollbackWindowMinutes int   `yaml:"rollback_window_minutes"`
-	RollbackCooldownDays  int `yaml:"rollback_cooldown_days"`
-	CascadeCooldownCycles int `yaml:"cascade_cooldown_cycles"`
+	Level                string `yaml:"level" doc:"Autonomy tier. observation = log only; advisory = queue actions for approval; autonomous = execute safe/moderate actions directly." warning:"Changing to autonomous enables DDL execution without human review."`
+	RampStart            string `yaml:"ramp_start" doc:"RFC3339 timestamp when the trust ramp began. Auto-persisted on first startup if empty. Used to gate newly-supported actions behind a soak period."`
+	MaintenanceWindow    string `yaml:"maintenance_window" doc:"Cron-like window (e.g. 'Sun 02:00-06:00') during which heavy maintenance actions like ANALYZE on large tables or REINDEX are permitted."`
+	Tier3Safe            bool   `yaml:"tier3_safe" doc:"Enable tier-3 actions classified as safe (e.g. CREATE INDEX CONCURRENTLY on small tables). Requires trust.level=autonomous."`
+	Tier3Moderate        bool   `yaml:"tier3_moderate" doc:"Enable tier-3 actions classified as moderate risk (e.g. VACUUM FULL on small tables). Requires trust.level=autonomous." warning:"Moderate actions can briefly lock tables."`
+	Tier3HighRisk        bool   `yaml:"tier3_high_risk" doc:"Enable tier-3 actions classified as high risk. Ignored outside fleet mode — standalone always forces this to false." mode:"fleet-only" warning:"High-risk actions can destabilize production — enable only with a reviewed rollback plan."`
+	RollbackThresholdPct int    `yaml:"rollback_threshold_pct" doc:"Latency regression percentage (0-100) that triggers automatic rollback of a recently applied action. Lower = more sensitive."`
+	RollbackWindowMinutes int   `yaml:"rollback_window_minutes" doc:"How many minutes after applying an action pg_sage watches for regressions before considering it stable."`
+	RollbackCooldownDays  int `yaml:"rollback_cooldown_days" doc:"After a rollback, the same action family is blocked for this many days to prevent flap. Default 3 days."`
+	CascadeCooldownCycles int `yaml:"cascade_cooldown_cycles" doc:"If N consecutive cycles each propose new actions, throttle to observe impact. Prevents storm-like cascades of small changes."`
 }
 
 type LLMConfig struct {
-	Enabled             bool               `yaml:"enabled"`
-	Endpoint            string             `yaml:"endpoint"`
-	APIKey              string             `yaml:"api_key"`
-	Model               string             `yaml:"model"`
-	TimeoutSeconds      int                `yaml:"timeout_seconds"`
-	TokenBudgetDaily    int                `yaml:"token_budget_daily"`
-	ContextBudgetTokens int                `yaml:"context_budget_tokens"`
-	CooldownSeconds     int                `yaml:"cooldown_seconds"`
+	Enabled             bool               `yaml:"enabled" doc:"Global enable for LLM-assisted analysis (planner explanations, recommendation narratives). When disabled, pg_sage falls back to deterministic heuristics only."`
+	Endpoint            string             `yaml:"endpoint" doc:"LLM provider base URL. Supports OpenAI-compatible chat-completions endpoints. Can be left blank to use the vendor default."`
+	APIKey              string             `yaml:"api_key" doc:"Authentication token for the LLM provider. Prefer sourcing from environment via ${LLM_API_KEY} rather than committing literal values." secret:"true"`
+	Model               string             `yaml:"model" doc:"Model identifier sent to the provider (e.g. gpt-4o-mini). Must support JSON-mode responses for structured outputs."`
+	TimeoutSeconds      int                `yaml:"timeout_seconds" doc:"HTTP request timeout for each LLM call. Low values protect the analyzer cycle from slow providers; high values tolerate cold-start latency."`
+	TokenBudgetDaily    int                `yaml:"token_budget_daily" doc:"Soft daily cap on total tokens (input + output) the sidecar will spend on LLM requests. Once exceeded the LLM is skipped until the next UTC day."`
+	ContextBudgetTokens int                `yaml:"context_budget_tokens" doc:"Maximum tokens attached as context (schema, stats, plans) to a single LLM request. Prevents oversized prompts from busting the model context window."`
+	CooldownSeconds     int                `yaml:"cooldown_seconds" doc:"Minimum seconds between two LLM requests. Rate-limits the sidecar so it cannot burst the provider during a busy cycle."`
 	IndexOptimizer      IndexOptimizerConfig `yaml:"index_optimizer"` // Deprecated: use Optimizer.
 	Optimizer    OptimizerConfig    `yaml:"optimizer"`
 	OptimizerLLM OptimizerLLMConfig `yaml:"optimizer_llm"`
@@ -151,15 +156,15 @@ type OptimizerConfig struct {
 
 // OptimizerLLMConfig configures the dedicated optimizer LLM (reasoning-tier).
 type OptimizerLLMConfig struct {
-	Enabled          bool   `yaml:"enabled"`
-	Endpoint         string `yaml:"endpoint"`
-	APIKey           string `yaml:"api_key"`
-	Model            string `yaml:"model"`
-	TimeoutSeconds   int    `yaml:"timeout_seconds"`
-	TokenBudgetDaily int    `yaml:"token_budget_daily"`
-	CooldownSeconds  int    `yaml:"cooldown_seconds"`
-	MaxOutputTokens  int    `yaml:"max_output_tokens"`
-	FallbackToGeneral bool  `yaml:"fallback_to_general"`
+	Enabled          bool   `yaml:"enabled" doc:"Enable the dedicated reasoning-tier LLM used by the index optimizer. When false the optimizer falls back to the general llm.* client."`
+	Endpoint         string `yaml:"endpoint" doc:"Base URL for the optimizer LLM provider. Can differ from the general llm.endpoint when the reasoning tier lives on another provider."`
+	APIKey           string `yaml:"api_key" doc:"API key for the optimizer LLM. Prefer env-var substitution over literal values." secret:"true"`
+	Model            string `yaml:"model" doc:"Reasoning-tier model identifier (e.g. o1-mini). Must return JSON when requested."`
+	TimeoutSeconds   int    `yaml:"timeout_seconds" doc:"Per-request timeout for optimizer LLM calls. Reasoning models typically need longer timeouts than chat models."`
+	TokenBudgetDaily int    `yaml:"token_budget_daily" doc:"Daily token cap for the optimizer LLM — independent of the general llm.token_budget_daily so reasoning spend can be tracked separately."`
+	CooldownSeconds  int    `yaml:"cooldown_seconds" doc:"Minimum seconds between two optimizer LLM requests."`
+	MaxOutputTokens  int    `yaml:"max_output_tokens" doc:"Upper bound on output tokens accepted from the optimizer LLM. Truncates runaway responses."`
+	FallbackToGeneral bool  `yaml:"fallback_to_general" doc:"If true, fall back to the general llm.* client when the optimizer LLM is unavailable or over budget."`
 }
 
 type AdvisorConfig struct {
@@ -222,14 +227,31 @@ type ForecasterConfig struct {
 }
 
 type TunerConfig struct {
-	Enabled                bool    `yaml:"enabled"`
-	LLMEnabled             bool    `yaml:"llm_enabled"`
-	WorkMemMaxMB           int     `yaml:"work_mem_max_mb"`
-	PlanTimeRatio          float64 `yaml:"plan_time_ratio"`
-	NestedLoopRowThreshold int64   `yaml:"nested_loop_row_threshold"`
-	ParallelMinTableRows   int64   `yaml:"parallel_min_table_rows"`
-	MinQueryCalls          int     `yaml:"min_query_calls"`
-	VerifyAfterApply       bool    `yaml:"verify_after_apply"`
+	Enabled                bool    `yaml:"enabled" doc:"Master switch for the per-query tuner. When false, no hints are written and Tune() is a no-op — the analyzer still runs."`
+	LLMEnabled             bool    `yaml:"llm_enabled" doc:"Allow the tuner to call the LLM for hint prescription when deterministic rules do not produce a recommendation. Budget-gated by llm.token_budget_daily."`
+	WorkMemMaxMB           int     `yaml:"work_mem_max_mb" doc:"Maximum per-query work_mem (MB) the tuner is allowed to prescribe via Set(work_mem) hints. Ceiling prevents runaway memory suggestions."`
+	PlanTimeRatio          float64 `yaml:"plan_time_ratio" doc:"When plan_time / exec_time exceeds this ratio, the tuner flags the query as plan-time-dominated and considers prepared-statement hints."`
+	NestedLoopRowThreshold int64   `yaml:"nested_loop_row_threshold" doc:"Minimum actual-row count on a nested-loop inner that triggers the bad-nested-loop symptom. Smaller values increase sensitivity."`
+	ParallelMinTableRows   int64   `yaml:"parallel_min_table_rows" doc:"Threshold for suggesting parallel-enable hints on large sequential scans. Tables smaller than this are assumed not to benefit from parallelism."`
+	MinQueryCalls          int     `yaml:"min_query_calls" doc:"Require at least this many pg_stat_statements.calls before the tuner will act on a query. Filters out one-offs."`
+	VerifyAfterApply       bool    `yaml:"verify_after_apply" doc:"Run the daily hint revalidation loop. Removes hints that have become redundant, harmful, or broken. Requires pg_hint_plan." warning:"v0.8.5 activates a real background cycle here — upgrade note: if you want v0.8.4 inert behavior, set this to false before upgrading."`
+
+	// v0.8.5 Feature 1 — Hint revalidation loop.
+	HintRetirementDays           int     `yaml:"hint_retirement_days" doc:"Hints older than this many days are retired unconditionally, regardless of current query behavior. Safety net against stale hint accumulation."`
+	RevalidationIntervalHours    int     `yaml:"revalidation_interval_hours" doc:"How often the hint revalidation loop runs. Set to 0 to disable the loop entirely. Default 24 hours."`
+	RevalidationKeepRatio        float64 `yaml:"revalidation_keep_ratio" doc:"During cost comparison, hinted plan cost must be at most this ratio of the unhinted plan to keep the hint. Default 1.2 (hinted <= 120% of unhinted)."`
+	RevalidationRollbackRatio    float64 `yaml:"revalidation_rollback_ratio" doc:"When hinted-plan cost exceeds unhinted by this ratio, the hint is marked broken and rolled back. Default 0.8 (hinted >= 125% of unhinted)."`
+	RevalidationExplainTimeoutMs int     `yaml:"revalidation_explain_timeout_ms" doc:"statement_timeout applied to EXPLAIN queries issued by the revalidation loop. Queries that cannot be explained in time are deferred."`
+
+	// v0.8.5 Feature 2 — Stale-stats detection + ANALYZE action.
+	StaleStatsEstimateSkew        float64 `yaml:"stale_stats_estimate_skew" doc:"Ratio ActualRows / PlanRows above which a plan node is considered row-estimate skewed. Default 10 — same threshold as the bad-nested-loop check."`
+	StaleStatsModRatio            float64 `yaml:"stale_stats_mod_ratio" doc:"Fraction of rows modified since last ANALYZE (n_mod_since_analyze / reltuples) required to treat a table as stale. Default 0.1 = 10%."`
+	StaleStatsAgeMinutes          int     `yaml:"stale_stats_age_minutes" doc:"Both manual and autovacuum last_analyze must be older than this many minutes before the table is considered stale. Default 60."`
+	AnalyzeMaxTableMB             int64   `yaml:"analyze_max_table_mb" doc:"Tables larger than this many MB are never auto-ANALYZEd — an advisory finding is emitted instead for operator review." warning:"Default 10240 (10GB). Raise with care — ANALYZE on TB-scale tables can saturate I/O."`
+	AnalyzeCooldownMinutes        int     `yaml:"analyze_cooldown_minutes" doc:"Minimum minutes between tuner-initiated ANALYZE runs on the same table. Also respects autovacuum last_analyze as a recent-run signal."`
+	AnalyzeMaintenanceThresholdMB int64   `yaml:"analyze_maintenance_threshold_mb" doc:"Tables larger than this many MB can only be ANALYZEd during the configured maintenance_window. Default 1024 (1GB)."`
+	AnalyzeTimeoutMs              int     `yaml:"analyze_timeout_ms" doc:"statement_timeout for ANALYZE actions. Default 600000 (10 minutes). Exceeding this marks the action failed_timeout and extends the cooldown."`
+	MaxConcurrentAnalyze          int     `yaml:"max_concurrent_analyze" doc:"Hard cap on concurrent ANALYZE actions across the entire sidecar process (shared semaphore — fleet-wide, not per-database). Default 1."`
 }
 
 type RetentionConfig struct {
@@ -245,13 +267,13 @@ type PrometheusConfig struct {
 
 // OAuthConfig holds OAuth2/OIDC SSO settings.
 type OAuthConfig struct {
-	Enabled      bool   `yaml:"enabled"`
-	Provider     string `yaml:"provider"`
-	ClientID     string `yaml:"client_id"`
-	ClientSecret string `yaml:"client_secret"`
-	RedirectURL  string `yaml:"redirect_url"`
-	IssuerURL    string `yaml:"issuer_url"`
-	DefaultRole  string `yaml:"default_role"`
+	Enabled      bool   `yaml:"enabled" doc:"Enable OAuth single sign-on for the sidecar UI. When false, the UI falls back to local auth."`
+	Provider     string `yaml:"provider" doc:"OAuth provider identifier. Supported values include google, github, okta, and generic OIDC."`
+	ClientID     string `yaml:"client_id" doc:"OAuth client ID issued by the provider when the pg_sage application was registered."`
+	ClientSecret string `yaml:"client_secret" doc:"OAuth client secret issued by the provider. Source from an environment variable in production." secret:"true"`
+	RedirectURL  string `yaml:"redirect_url" doc:"Absolute URL the provider redirects to after authentication. Must match the URI registered at the provider."`
+	IssuerURL    string `yaml:"issuer_url" doc:"OIDC issuer URL used to discover the provider's authorization and token endpoints."`
+	DefaultRole  string `yaml:"default_role" doc:"Role assigned to newly authenticated users when no role mapping rule matches."`
 }
 
 // Interval helpers.
@@ -514,6 +536,7 @@ func newDefaults() *Config {
 			RegressionThresholdPct:       DefaultRegressionThresholdPct,
 			RegressionLookbackDays:       DefaultRegressionLookbackDays,
 			CheckpointFreqWarningPerHour: DefaultCheckpointFreqWarningPerHour,
+			WorkMemPromotionThreshold:    DefaultAnalyzerWorkMemPromotionThreshold,
 		},
 		Safety: SafetyConfig{
 			CPUCeilingPct:            DefaultCPUCeilingPct,
@@ -615,6 +638,23 @@ func newDefaults() *Config {
 			ParallelMinTableRows:   DefaultTunerParallelMinRows,
 			MinQueryCalls:          DefaultTunerMinQueryCalls,
 			VerifyAfterApply:       true,
+
+			// Feature 1 — Hint revalidation loop.
+			HintRetirementDays:           DefaultTunerHintRetirementDays,
+			RevalidationIntervalHours:    DefaultTunerRevalidationIntervalHours,
+			RevalidationKeepRatio:        DefaultTunerRevalidationKeepRatio,
+			RevalidationRollbackRatio:    DefaultTunerRevalidationRollbackRatio,
+			RevalidationExplainTimeoutMs: DefaultTunerRevalidationExplainTimeoutMs,
+
+			// Feature 2 — Stale-stats detection + ANALYZE.
+			StaleStatsEstimateSkew:        DefaultTunerStaleStatsEstimateSkew,
+			StaleStatsModRatio:            DefaultTunerStaleStatsModRatio,
+			StaleStatsAgeMinutes:          DefaultTunerStaleStatsAgeMinutes,
+			AnalyzeMaxTableMB:             DefaultTunerAnalyzeMaxTableMB,
+			AnalyzeCooldownMinutes:        DefaultTunerAnalyzeCooldownMinutes,
+			AnalyzeMaintenanceThresholdMB: DefaultTunerAnalyzeMaintenanceThresholdMB,
+			AnalyzeTimeoutMs:              DefaultTunerAnalyzeTimeoutMs,
+			MaxConcurrentAnalyze:          DefaultTunerMaxConcurrentAnalyze,
 		},
 		Retention: RetentionConfig{
 			SnapshotsDays: DefaultRetentionSnapshotsDays,
@@ -825,3 +865,9 @@ func envFloat(key string) float64 {
 // Suppress unused warnings.
 var _ = envFloat
 var _ = strings.Contains
+
+// DefaultConfig returns a Config populated with defaults.
+// Exported for use by cmd/gen_config_meta (v0.8.5 Feature 5).
+func DefaultConfig() *Config {
+	return newDefaults()
+}

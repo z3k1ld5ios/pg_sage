@@ -193,6 +193,11 @@ func registerAPIRoutes(
 	mux.HandleFunc(
 		"GET /api/v1/llm/status",
 		llmStatusHandler(llmMgr))
+
+	budgetResetH := adminOnly(http.HandlerFunc(
+		llmBudgetResetHandler(llmMgr)))
+	mux.Handle(
+		"POST /api/v1/llm/budget/reset", budgetResetH)
 }
 
 func registerAuthRoutes(

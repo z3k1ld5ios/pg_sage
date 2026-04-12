@@ -352,6 +352,13 @@ func (a *Analyzer) cycle(ctx context.Context) {
 		}
 	}
 
+	// v0.8.5 Feature 3: work_mem role-promotion advisor.
+	// Runs after the tuner so it sees hints installed this cycle.
+	allFindings = append(allFindings, a.checkWorkMemPromotion(ctx)...)
+
+	// v0.8.5 Feature 4: extension drift detector.
+	allFindings = append(allFindings, a.checkExtensionDrift(ctx)...)
+
 	// Deduplicate conflicting findings across advisors.
 	ioUtil := computeIOUtilPct(current)
 	allFindings = DeduplicateFindings(allFindings, ioUtil, a.logFn)

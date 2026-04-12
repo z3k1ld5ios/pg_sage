@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useAPI } from '../hooks/useAPI'
 import { LoadingSpinner } from '../components/LoadingSpinner'
 import { ErrorBanner } from '../components/ErrorBanner'
+import { ConfigTooltip } from '../components/ConfigTooltip'
 import {
   ShieldAlert, Play, Save, RotateCcw, Check, X,
 } from 'lucide-react'
@@ -431,7 +432,9 @@ function Field({
       <div className="w-64 flex-shrink-0">
         <label className="text-sm"
           style={{ color: 'var(--text-primary)' }}>
-          {label}
+          <ConfigTooltip configKey={configKey}>
+            <span>{label}</span>
+          </ConfigTooltip>
           <SourceBadge source={source} />
         </label>
         {help && (

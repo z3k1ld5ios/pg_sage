@@ -47,6 +47,9 @@ var excludedExactKeys = map[string]bool{
 	"analyzer.xid_wraparound_critical":                true,
 	"analyzer.regression_lookback_days":                true,
 	"analyzer.checkpoint_frequency_warning_per_hour":   true,
+	// v0.8.5 Feature 3 — work_mem promotion advisor threshold.
+	// Read once per cycle from YAML; not exposed as a runtime override.
+	"analyzer.work_mem_promotion_threshold": true,
 
 	// Trust ramp_start — written in YAML but not overridable.
 	"trust.ramp_start": true,

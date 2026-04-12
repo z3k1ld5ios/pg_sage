@@ -238,3 +238,24 @@ func TestIsBudgetExhausted_DayReset(t *testing.T) {
 		t.Error("IsBudgetExhausted() should be false after day rollover")
 	}
 }
+
+func TestResetBudget(t *testing.T) {
+	cfg := &config.LLMConfig{TokenBudgetDaily: 1000}
+	client := New(cfg, noopLog)
+	client.budgetResetDay = time.Now().YearDay()
+	client.tokensUsedToday.Store(5000)
+
+	if !client.IsBudgetExhausted() {
+		t.Fatal("precondition: budget should be exhausted")
+	}
+
+	client.ResetBudget()
+
+	if client.TokensUsedToday() != 0 {
+		t.Errorf("TokensUsedToday = %d after reset, want 0",
+			client.TokensUsedToday())
+	}
+	if client.IsBudgetExhausted() {
+		t.Error("budget should not be exhausted after reset")
+	}
+}

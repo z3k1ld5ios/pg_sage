@@ -31,6 +31,7 @@ import (
 
 var (
 	p2Pool     *pgxpool.Pool
+	p2LockPool *pgxpool.Pool // MaxConns=1 side pool holding the advisory lock
 	p2PoolOnce sync.Once
 	p2PoolErr  error
 	p2Key      = crypto.DeriveKey("phase2-test-key")
@@ -92,6 +93,38 @@ func phase2RequireDB(t *testing.T) (
 			qctx, p2Pool); err != nil {
 			p2PoolErr = fmt.Errorf(
 				"migrate config: %w", err)
+			return
+		}
+
+		// Side pool holds the pg_sage advisory lock for the
+		// lifetime of the test binary. Without this, the
+		// schema-package tests (which run in parallel under
+		// `go test -p 4 ./...`) can DROP SCHEMA sage CASCADE
+		// mid-test and race this package's queries. MaxConns=1
+		// keeps the lock on a single pgx session so it does
+		// not get released when a connection returns to the
+		// pool. The lock is never explicitly released — the
+		// process exit releases the session.
+		lockCfg, err := pgxpool.ParseConfig(dsn)
+		if err != nil {
+			p2PoolErr = fmt.Errorf(
+				"parsing lock DSN: %w", err)
+			return
+		}
+		lockCfg.MaxConns = 1
+		p2LockPool, err = pgxpool.NewWithConfig(qctx, lockCfg)
+		if err != nil {
+			p2PoolErr = fmt.Errorf(
+				"lock pool: %w", err)
+			return
+		}
+		if _, err := p2LockPool.Exec(qctx,
+			"SELECT pg_advisory_lock(hashtext('pg_sage'))",
+		); err != nil {
+			p2PoolErr = fmt.Errorf(
+				"acquiring advisory lock: %w", err)
+			p2LockPool.Close()
+			p2LockPool = nil
 			return
 		}
 	})

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pg-sage/sidecar/internal/analyzer"
@@ -19,6 +20,20 @@ type Tuner struct {
 	fallbackClient *llm.Client
 	logFn          func(string, string, ...any)
 	recentlyTuned  map[int64]int
+
+	// mu serializes Tune() and Revalidate() so the two loops
+	// never interleave writes to sage.query_hints.
+	mu sync.Mutex
+
+	// staleStats is the per-cycle cache of pg_stat_user_tables
+	// information; reloaded at the start of every Tune() call.
+	staleStats *StaleStatsCache
+
+	// staleStatsEmitted tracks tables already emitted as
+	// stale_statistics findings during the current cycle so
+	// multiple queries touching the same stale table produce
+	// exactly one ANALYZE finding.
+	staleStatsEmitted map[string]bool
 }
 
 // Option configures optional Tuner behavior.
@@ -81,6 +96,18 @@ func (t *Tuner) Tune(
 	ctx context.Context,
 	deferredTables map[string]bool,
 ) ([]analyzer.Finding, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// Reload stale-stats cache and dedup set for this cycle.
+	cache, staleErr := LoadStaleStatsCache(ctx, t.pool, t.cfg)
+	if staleErr != nil {
+		t.logFn("WARN",
+			"tuner: load stale stats cache: %v", staleErr)
+	}
+	t.staleStats = cache
+	t.staleStatsEmitted = map[string]bool{}
+
 	t.tickCooldowns()
 	candidates, err := t.fetchCandidates(ctx)
 	if err != nil {
@@ -261,6 +288,15 @@ func (t *Tuner) processCandidate(
 		return nil
 	}
 
+	// Split stale_stats symptoms into separate table-level
+	// ANALYZE findings so they bypass the query-hint flow.
+	var staleFindings []analyzer.Finding
+	symptoms, staleFindings = t.extractStaleStats(symptoms)
+
+	if len(symptoms) == 0 {
+		return staleFindings
+	}
+
 	// Always compute deterministic fallback.
 	fallback := t.prescribeAll(symptoms)
 	fallbackHint := CombineHints(fallback)
@@ -282,7 +318,65 @@ func (t *Tuner) processCandidate(
 	rewrite, rewriteRationale := extractRewrite(prescriptions)
 	finding := t.buildFinding(c, symptoms, combined,
 		title, rationale, rewrite, rewriteRationale)
-	return []analyzer.Finding{finding}
+	return append(staleFindings, finding)
+}
+
+// extractStaleStats splits a symptom list into the non-stale
+// tail (returned first) and one ANALYZE finding per distinct
+// stale table, deduping against t.staleStatsEmitted so the
+// same table never produces two findings in one cycle.
+func (t *Tuner) extractStaleStats(
+	symptoms []PlanSymptom,
+) ([]PlanSymptom, []analyzer.Finding) {
+	var kept []PlanSymptom
+	var findings []analyzer.Finding
+	for _, s := range symptoms {
+		if s.Kind != SymptomStaleStats {
+			kept = append(kept, s)
+			continue
+		}
+		schema := s.Schema
+		table := s.RelationName
+		if schema == "" {
+			schema = "public"
+		}
+		canonical := schema + "." + table
+		if t.staleStatsEmitted[canonical] {
+			continue
+		}
+		t.staleStatsEmitted[canonical] = true
+
+		sizeMB := int64(0)
+		if t.staleStats != nil {
+			sizeMB = t.staleStats.SizeMB(canonical)
+		}
+		findings = append(findings, analyzer.Finding{
+			Category:         "stale_statistics",
+			Severity:         "warning",
+			ObjectType:       "table",
+			ObjectIdentifier: canonical,
+			Title: fmt.Sprintf(
+				"Stale statistics on %s — ANALYZE recommended",
+				canonical,
+			),
+			Detail: map[string]any{
+				"canonical":  canonical,
+				"trigger":    "nested_loop_misestimate",
+				"size_mb":    sizeMB,
+				"schemaname": schema,
+				"tablename":  table,
+			},
+			Recommendation: fmt.Sprintf(
+				"Run ANALYZE on %s to refresh optimizer statistics",
+				canonical,
+			),
+			ActionRisk: "safe",
+			RecommendedSQL: fmt.Sprintf(
+				"ANALYZE %s", QuoteQualified(schema, table),
+			),
+		})
+	}
+	return kept, findings
 }
 
 func (t *Tuner) tryLLMPrescribe(
@@ -364,6 +458,11 @@ func (t *Tuner) scanPlanForQuery(
 			queryID, err)
 		return nil
 	}
+	// Route bad_nested_loop to stale_stats symptoms when any
+	// relation in the plan has stale statistics.
+	symptoms = annotateForStaleStats(
+		[]byte(planJSON), symptoms, t.staleStats,
+	)
 	return symptoms
 }
 

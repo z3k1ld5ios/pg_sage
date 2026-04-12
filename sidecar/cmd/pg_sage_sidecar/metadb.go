@@ -452,8 +452,11 @@ func buildExecutor(
 	dbPool *pgxpool.Pool, dbAnal *analyzer.Analyzer,
 ) *executor.Executor {
 	ctx := context.Background()
+	// Honour the YAML-configured trust.ramp_start on first bootstrap
+	// of a store-managed database. Once sage.config has a row, the
+	// stored value wins and configRampStart is ignored.
 	rStart, _ := schema.PersistTrustRampStart(
-		ctx, dbPool, time.Time{},
+		ctx, dbPool, configRampStart,
 	)
 	dbExec := executor.New(
 		dbPool, cfg, dbAnal, rStart, logStructuredWrapper,

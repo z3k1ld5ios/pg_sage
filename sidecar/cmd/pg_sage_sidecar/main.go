@@ -47,6 +47,10 @@ var (
 
 // Global state.
 var (
+	// analyzeSem serializes ANALYZE actions fleet-wide across
+	// every Executor instance in this process. Sized from
+	// cfg.Tuner.MaxConcurrentAnalyze at startup.
+	analyzeSem         chan struct{}
 	pool               *pgxpool.Pool
 	extensionAvailable bool
 	cloudEnvironment   string
@@ -63,6 +67,12 @@ var (
 	cleaner            *retention.Cleaner
 	alertMgr           *alerting.Manager
 	rampStart          time.Time
+	// configRampStart is the raw trust.ramp_start timestamp parsed
+	// from YAML at startup. Fleet-mode per-database bootstraps reuse
+	// this value when seeding each database's sage.config row so
+	// that YAML-configured ramp starts are not silently replaced by
+	// now() at first run. Zero value means YAML had no override.
+	configRampStart time.Time
 	shutdownFlag       bool
 	fleetMgr           *fleet.DatabaseManager
 	apiServer          *http.Server
@@ -284,20 +294,10 @@ func initStandalone() {
 	}
 
 	// 3. Persist trust ramp start.
-	var configRampStart time.Time
-	if cfg.Trust.RampStart != "" {
-		for _, layout := range []string{
-			time.RFC3339, "2006-01-02", "2006-01-02T15:04:05",
-		} {
-			if parsed, pErr := time.Parse(layout, cfg.Trust.RampStart); pErr == nil {
-				configRampStart = parsed
-				break
-			}
-		}
-		if configRampStart.IsZero() {
-			logWarn("startup", "could not parse trust.ramp_start %q, using now()",
-				cfg.Trust.RampStart)
-		}
+	configRampStart = parseConfigRampStart(cfg.Trust.RampStart)
+	if cfg.Trust.RampStart != "" && configRampStart.IsZero() {
+		logWarn("startup", "could not parse trust.ramp_start %q, using now()",
+			cfg.Trust.RampStart)
 	}
 	rampStart, err = schema.PersistTrustRampStart(ctx, pool, configRampStart)
 	if err != nil {
@@ -306,6 +306,17 @@ func initStandalone() {
 	}
 	logInfo("startup", "trust ramp start: %s (age: %s)",
 		rampStart.Format(time.RFC3339), time.Since(rampStart).Round(time.Hour))
+
+	// 3c. Fleet-wide ANALYZE semaphore — bounds parallel
+	// ANALYZE execution across every Executor instance.
+	maxAnalyze := cfg.Tuner.MaxConcurrentAnalyze
+	if maxAnalyze <= 0 {
+		maxAnalyze = 1
+	}
+	analyzeSem = make(chan struct{}, maxAnalyze)
+	logInfo("startup",
+		"ANALYZE semaphore sized to %d concurrent slots",
+		maxAnalyze)
 
 	// 4. Verify grants.
 	executor.VerifyGrants(ctx, pool, cfg.Postgres.User, logStructuredWrapper)
@@ -407,6 +418,23 @@ func initStandalone() {
 			MinQueryCalls:          cfg.Tuner.MinQueryCalls,
 			VerifyAfterApply:       cfg.Tuner.VerifyAfterApply,
 			CascadeCooldownCycles:  cfg.Trust.CascadeCooldownCycles,
+
+			// v0.8.5 Feature 1 — Hint revalidation loop.
+			HintRetirementDays:           cfg.Tuner.HintRetirementDays,
+			RevalidationIntervalHours:    cfg.Tuner.RevalidationIntervalHours,
+			RevalidationKeepRatio:        cfg.Tuner.RevalidationKeepRatio,
+			RevalidationRollbackRatio:    cfg.Tuner.RevalidationRollbackRatio,
+			RevalidationExplainTimeoutMs: cfg.Tuner.RevalidationExplainTimeoutMs,
+
+			// v0.8.5 Feature 2 — Stale-stats detection + ANALYZE.
+			StaleStatsEstimateSkew:        cfg.Tuner.StaleStatsEstimateSkew,
+			StaleStatsModRatio:            cfg.Tuner.StaleStatsModRatio,
+			StaleStatsAgeMinutes:          cfg.Tuner.StaleStatsAgeMinutes,
+			AnalyzeMaxTableMB:             cfg.Tuner.AnalyzeMaxTableMB,
+			AnalyzeCooldownMinutes:        cfg.Tuner.AnalyzeCooldownMinutes,
+			AnalyzeMaintenanceThresholdMB: cfg.Tuner.AnalyzeMaintenanceThresholdMB,
+			AnalyzeTimeoutMs:              cfg.Tuner.AnalyzeTimeoutMs,
+			MaxConcurrentAnalyze:          cfg.Tuner.MaxConcurrentAnalyze,
 		}
 		var tunerOpts []tuner.Option
 		if cfg.Tuner.LLMEnabled && llmMgr != nil {
@@ -425,6 +453,10 @@ func initStandalone() {
 		qt = tuner.New(pool, tunerCfg, hpAvail,
 			logStructuredWrapper, tunerOpts...)
 		logInfo("startup", "tuner enabled")
+
+		// Start hint revalidation loop (v0.8.5 Feature 1).
+		go qt.StartRevalidationLoop(
+			shutdownCtx, tunerCfg.RevalidationIntervalHours)
 	}
 
 	anal = analyzer.New(
@@ -435,6 +467,7 @@ func initStandalone() {
 
 	// 9. Executor runs after analyzer (called from analyzer loop).
 	exec = executor.New(pool, cfg, anal, rampStart, logStructuredWrapper)
+	exec.WithAnalyzeSemaphore(analyzeSem)
 
 	// 9b. Action queue store + execution mode.
 	actionStore = store.NewActionStore(pool)
@@ -814,6 +847,23 @@ func initFleetMultiDB() {
 				MinQueryCalls:          cfg.Tuner.MinQueryCalls,
 				VerifyAfterApply:       cfg.Tuner.VerifyAfterApply,
 				CascadeCooldownCycles:  cfg.Trust.CascadeCooldownCycles,
+
+				// v0.8.5 Feature 1 — Hint revalidation loop.
+				HintRetirementDays:           cfg.Tuner.HintRetirementDays,
+				RevalidationIntervalHours:    cfg.Tuner.RevalidationIntervalHours,
+				RevalidationKeepRatio:        cfg.Tuner.RevalidationKeepRatio,
+				RevalidationRollbackRatio:    cfg.Tuner.RevalidationRollbackRatio,
+				RevalidationExplainTimeoutMs: cfg.Tuner.RevalidationExplainTimeoutMs,
+
+				// v0.8.5 Feature 2 — Stale-stats detection + ANALYZE.
+				StaleStatsEstimateSkew:        cfg.Tuner.StaleStatsEstimateSkew,
+				StaleStatsModRatio:            cfg.Tuner.StaleStatsModRatio,
+				StaleStatsAgeMinutes:          cfg.Tuner.StaleStatsAgeMinutes,
+				AnalyzeMaxTableMB:             cfg.Tuner.AnalyzeMaxTableMB,
+				AnalyzeCooldownMinutes:        cfg.Tuner.AnalyzeCooldownMinutes,
+				AnalyzeMaintenanceThresholdMB: cfg.Tuner.AnalyzeMaintenanceThresholdMB,
+				AnalyzeTimeoutMs:              cfg.Tuner.AnalyzeTimeoutMs,
+				MaxConcurrentAnalyze:          cfg.Tuner.MaxConcurrentAnalyze,
 			}
 			var tunerOpts []tuner.Option
 			if cfg.Tuner.LLMEnabled && llmMgr != nil {
@@ -828,6 +878,9 @@ func initFleetMultiDB() {
 			}
 			dbTuner = tuner.New(dbPool, tunerCfg, hpAvail,
 				logStructuredWrapper, tunerOpts...)
+			// Per-database hint revalidation loop.
+			go dbTuner.StartRevalidationLoop(
+				shutdownCtx, tunerCfg.RevalidationIntervalHours)
 		}
 
 		// Per-database autoexplain collector.
@@ -869,12 +922,16 @@ func initFleetMultiDB() {
 			logStructuredWrapper)
 		go dbAnal.Run(shutdownCtx)
 
-		// Per-database executor.
+		// Per-database executor. Pass the YAML-parsed configRampStart
+		// so the first-time bootstrap of each database's sage.config
+		// row honours the operator's configured ramp start rather than
+		// silently defaulting to now().
 		rStart, _ := schema.PersistTrustRampStart(
-			context.Background(), dbPool, time.Time{})
+			context.Background(), dbPool, configRampStart)
 		dbExec := executor.New(
 			dbPool, cfg, dbAnal, rStart,
 			logStructuredWrapper)
+		dbExec.WithAnalyzeSemaphore(analyzeSem)
 		dbActionStore := store.NewActionStore(dbPool)
 		dbExec.WithActionStore(dbActionStore, "auto")
 
@@ -1112,6 +1169,23 @@ func buildFleetLLMFeatures(
 			MinQueryCalls:          cfg.Tuner.MinQueryCalls,
 			VerifyAfterApply:       cfg.Tuner.VerifyAfterApply,
 			CascadeCooldownCycles:  cfg.Trust.CascadeCooldownCycles,
+
+			// v0.8.5 Feature 1 — Hint revalidation loop.
+			HintRetirementDays:           cfg.Tuner.HintRetirementDays,
+			RevalidationIntervalHours:    cfg.Tuner.RevalidationIntervalHours,
+			RevalidationKeepRatio:        cfg.Tuner.RevalidationKeepRatio,
+			RevalidationRollbackRatio:    cfg.Tuner.RevalidationRollbackRatio,
+			RevalidationExplainTimeoutMs: cfg.Tuner.RevalidationExplainTimeoutMs,
+
+			// v0.8.5 Feature 2 — Stale-stats detection + ANALYZE.
+			StaleStatsEstimateSkew:        cfg.Tuner.StaleStatsEstimateSkew,
+			StaleStatsModRatio:            cfg.Tuner.StaleStatsModRatio,
+			StaleStatsAgeMinutes:          cfg.Tuner.StaleStatsAgeMinutes,
+			AnalyzeMaxTableMB:             cfg.Tuner.AnalyzeMaxTableMB,
+			AnalyzeCooldownMinutes:        cfg.Tuner.AnalyzeCooldownMinutes,
+			AnalyzeMaintenanceThresholdMB: cfg.Tuner.AnalyzeMaintenanceThresholdMB,
+			AnalyzeTimeoutMs:              cfg.Tuner.AnalyzeTimeoutMs,
+			MaxConcurrentAnalyze:          cfg.Tuner.MaxConcurrentAnalyze,
 		}
 		var tunerOpts []tuner.Option
 		if cfg.Tuner.LLMEnabled && llmMgr != nil {
@@ -1800,6 +1874,24 @@ func bootstrapAdminIfEmpty(
 		adminEmail)
 	fmt.Fprintf(os.Stderr, "\n*** INITIAL ADMIN PASSWORD: %s ***\n*** Change this password immediately. ***\n\n", password)
 	return nil
+}
+
+// parseConfigRampStart parses cfg.Trust.RampStart (accepted in
+// RFC3339 or date-only form) into a time.Time. Returns the zero
+// time on empty input or unparseable values — callers may use
+// IsZero() to distinguish "not set" from a valid timestamp.
+func parseConfigRampStart(raw string) time.Time {
+	if raw == "" {
+		return time.Time{}
+	}
+	for _, layout := range []string{
+		time.RFC3339, "2006-01-02", "2006-01-02T15:04:05",
+	} {
+		if parsed, err := time.Parse(layout, raw); err == nil {
+			return parsed
+		}
+	}
+	return time.Time{}
 }
 
 func logInfo(component, msg string, args ...any)  { logStructured("INFO", component, msg, args...) }

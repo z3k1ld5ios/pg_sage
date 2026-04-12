@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -22,11 +23,21 @@ func testDSN() string {
 func setupPool(t *testing.T) (*pgxpool.Pool, context.Context) {
 	t.Helper()
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, testDSN())
+	// Bounded ConnectTimeout prevents TCP-reachable-but-unresponsive PG
+	// servers (e.g., port accepted but handshake never completes) from
+	// hanging the test process for the full go test timeout.
+	cfg, err := pgxpool.ParseConfig(testDSN())
 	if err != nil {
 		t.Skipf("database unavailable: %v", err)
 	}
-	if err := pool.Ping(ctx); err != nil {
+	cfg.ConnConfig.ConnectTimeout = 5 * time.Second
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	pool, err := pgxpool.NewWithConfig(pingCtx, cfg)
+	if err != nil {
+		t.Skipf("database unavailable: %v", err)
+	}
+	if err := pool.Ping(pingCtx); err != nil {
 		pool.Close()
 		t.Skipf("database unavailable: %v", err)
 	}

@@ -277,6 +277,58 @@ func TestLLMStatusHandler_AnyExhausted(t *testing.T) {
 	}
 }
 
+// --- Budget Reset Handler Tests ---
+
+func TestLLMBudgetResetHandler_NilManager(t *testing.T) {
+	handler := llmBudgetResetHandler(nil)
+	req := httptest.NewRequest(
+		http.MethodPost, "/api/v1/llm/budget/reset", nil)
+	w := httptest.NewRecorder()
+
+	handler(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d", w.Code)
+	}
+}
+
+func TestLLMBudgetResetHandler_Success(t *testing.T) {
+	gen := testLLMClient("gemini-2.5-flash", 100000)
+	mgr := llm.NewManager(gen, nil, false)
+
+	handler := llmBudgetResetHandler(mgr)
+	req := httptest.NewRequest(
+		http.MethodPost, "/api/v1/llm/budget/reset", nil)
+	w := httptest.NewRecorder()
+
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var body struct {
+		Reset   bool                         `json:"reset"`
+		Clients map[string]llm.ClientStatus `json:"clients"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.Reset {
+		t.Error("reset should be true")
+	}
+	gs, ok := body.Clients["general"]
+	if !ok {
+		t.Fatal("expected 'general' key in clients")
+	}
+	if gs.TokensUsed != 0 {
+		t.Errorf("tokens_used = %d after reset, want 0", gs.TokensUsed)
+	}
+	if gs.Exhausted {
+		t.Error("budget should not be exhausted after reset")
+	}
+}
+
 func TestLLMStatusHandler_ResponseShape(t *testing.T) {
 	gen := testLLMClient("gpt-4o", 200000)
 	mgr := llm.NewManager(gen, nil, false)

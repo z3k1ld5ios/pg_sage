@@ -29,8 +29,31 @@ func Prescribe(
 		return prescribeSortLimit(symptom)
 	case SymptomStatTempSpill:
 		return prescribeStatTempSpill(symptom, cfg)
+	case SymptomStaleStats:
+		return prescribeStaleStats(symptom)
 	default:
 		return nil
+	}
+}
+
+// prescribeStaleStats builds a Prescription whose AnalyzeTarget
+// identifies the table needing ANALYZE. HintDirective stays
+// empty so CombineHints emits nothing for this symptom — the
+// tuner handles stale-stats symptoms outside the hint flow by
+// producing a dedicated table-level finding.
+func prescribeStaleStats(s PlanSymptom) *Prescription {
+	schema := s.Schema
+	if schema == "" {
+		schema = "public"
+	}
+	canonical := schema + "." + s.RelationName
+	return &Prescription{
+		Symptom:       SymptomStaleStats,
+		AnalyzeTarget: canonical,
+		Rationale: fmt.Sprintf(
+			"statistics stale on %s — ANALYZE recommended",
+			canonical,
+		),
 	}
 }
 

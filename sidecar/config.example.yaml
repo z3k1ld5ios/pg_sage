@@ -1,4 +1,4 @@
-# pg_sage Sidecar Configuration — v0.8.1
+# pg_sage Sidecar Configuration — v0.8.5
 # Copy to config.yaml and edit. All values shown are defaults.
 # Precedence: CLI flags > environment variables > this file > built-in defaults.
 # Environment variable expansion: use ${VAR_NAME} syntax in values.
@@ -35,6 +35,11 @@ analyzer:
   regression_threshold_pct: 50
   regression_lookback_days: 7
   checkpoint_frequency_warning_per_hour: 12
+  # v0.8.5 — Role-level work_mem promotion advisor.
+  # When a single role accumulates this many active per-query work_mem hints,
+  # the analyzer recommends promoting work_mem at the role level via ALTER ROLE.
+  # Set 0 to disable.
+  work_mem_promotion_threshold: 5
 
 safety:
   cpu_ceiling_pct: 90           # active_backends / max_connections threshold
@@ -150,7 +155,29 @@ tuner:
   nested_loop_row_threshold: 10000
   parallel_min_table_rows: 1000000
   min_query_calls: 100           # ignore rarely-called queries
-  verify_after_apply: true       # re-explain after hint to verify improvement
+  verify_after_apply: true       # v0.8.5: activates the revalidation loop below
+                                 # (set false to restore v0.8.4 inert behavior)
+
+  # v0.8.5 Feature 1 — Hint revalidation loop.
+  # Runs as a background cycle when verify_after_apply is true.
+  # Removes hints that have become redundant, harmful, or broken.
+  hint_retirement_days: 14              # Retire hints older than this unconditionally
+  revalidation_interval_hours: 24       # How often the loop runs (0 disables)
+  revalidation_keep_ratio: 1.2          # Keep hint if hinted_cost <= 120% of unhinted
+  revalidation_rollback_ratio: 0.8      # Rollback if hinted_cost > 125% of unhinted
+  revalidation_explain_timeout_ms: 10000  # statement_timeout for revalidation EXPLAINs
+
+  # v0.8.5 Feature 2 — Stale-statistics detection + ANALYZE action.
+  # Detects row-estimate skew in plans, cross-references pg_stat_user_tables,
+  # and proposes (or runs, in autonomous mode) targeted ANALYZE.
+  stale_stats_estimate_skew: 10.0          # actual/plan row ratio to flag skew
+  stale_stats_mod_ratio: 0.1               # n_mod_since_analyze / reltuples threshold
+  stale_stats_age_minutes: 60              # last_analyze must be older than this
+  analyze_max_table_mb: 10240              # >10GB — never auto-ANALYZE (advisory only)
+  analyze_cooldown_minutes: 60             # min minutes between ANALYZEs on a table
+  analyze_maintenance_threshold_mb: 1024   # >1GB — maintenance_window only
+  analyze_timeout_ms: 600000               # 10 min statement_timeout for ANALYZE
+  max_concurrent_analyze: 1                # Global semaphore cap (fleet-wide)
 
 retention:
   snapshots_days: 90

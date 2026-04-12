@@ -1,0 +1,88 @@
+mode: fleet
+
+databases:
+  - name: pgsage_demo_a
+    host: localhost
+    port: 5432
+    user: postgres
+    password: postgres
+    database: pgsage_demo_a
+    sslmode: disable
+    max_connections: 5
+  - name: pgsage_demo_b
+    host: localhost
+    port: 5432
+    user: postgres
+    password: postgres
+    database: pgsage_demo_b
+    sslmode: disable
+    max_connections: 5
+
+collector:
+  interval_seconds: 15
+  max_queries: 500
+
+analyzer:
+  interval_seconds: 20
+  slow_query_threshold_ms: 100
+  seq_scan_min_rows: 500
+  unused_index_window_days: 1
+  work_mem_promotion_threshold: 3
+
+safety:
+  query_timeout_ms: 2000
+  lock_timeout_ms: 5000
+
+trust:
+  level: autonomous
+  ramp_start: "2026-02-01T00:00:00Z"
+  maintenance_window: "* * * * *"
+  tier3_safe: true
+  tier3_moderate: true
+  rollback_window_minutes: 1
+  rollback_threshold_pct: 5
+
+llm:
+  enabled: true
+  endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+  model: "gemini-2.5-flash"
+  api_key: REDACTED_GEMINI_KEY_2
+  timeout_seconds: 60
+  token_budget_daily: 200000
+  max_output_tokens: 4096
+  index_optimizer:
+    enabled: true
+    min_query_calls: 5
+
+advisor:
+  enabled: true
+  interval_seconds: 30
+  vacuum_enabled: true
+  wal_enabled: true
+  connection_enabled: true
+  memory_enabled: true
+  rewrite_enabled: true
+  bloat_enabled: true
+
+tuner:
+  enabled: true
+  llm_enabled: false
+  min_query_calls: 5
+  hint_retention_days: 7
+  revalidation_interval_hours: 1
+  stale_stats_ratio: 0.2
+  stale_stats_min_age_hours: 1
+  analyze_cooldown_minutes: 5
+
+forecaster:
+  enabled: true
+  lookback_days: 30
+
+alerting:
+  enabled: false
+
+api:
+  listen_addr: "0.0.0.0:8080"
+
+prometheus:
+  listen_addr: "0.0.0.0:9187"

@@ -70,6 +70,17 @@ func (m *Manager) TokenStatus() map[string]ClientStatus {
 	return result
 }
 
+// ResetBudgets zeroes the daily token counter on all clients,
+// allowing LLM calls to resume immediately.
+func (m *Manager) ResetBudgets() {
+	if m.General != nil {
+		m.General.ResetBudget()
+	}
+	if m.Optimizer != nil {
+		m.Optimizer.ResetBudget()
+	}
+}
+
 func clientStatus(c *Client) ClientStatus {
 	now := time.Now()
 	tomorrow := time.Date(

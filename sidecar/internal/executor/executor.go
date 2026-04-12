@@ -47,6 +47,14 @@ type Executor struct {
 	databaseName       string
 	trustLevelOverride string
 	ddlSem             chan struct{} // limits concurrent DDL ops
+	analyzeSem         chan struct{} // shared fleet-wide for ANALYZE
+}
+
+// WithAnalyzeSemaphore wires a shared process-wide semaphore
+// used to serialize ANALYZE actions across every database
+// managed by the sidecar. nil is safe and disables gating.
+func (e *Executor) WithAnalyzeSemaphore(sem chan struct{}) {
+	e.analyzeSem = sem
 }
 
 // New creates a new Executor.
@@ -239,13 +247,16 @@ func (e *Executor) executeFinding(
 	ddlTimeout := e.cfg.Safety.DDLTimeout()
 	lockOpt := WithLockTimeout(e.cfg.Safety.LockTimeout())
 	var execErr error
-	if NeedsConcurrently(f.RecommendedSQL) ||
-		NeedsTopLevel(f.RecommendedSQL) {
+	switch {
+	case categorizeAction(f.RecommendedSQL) == "analyze":
+		execErr = e.executeAnalyze(ctx, f)
+	case NeedsConcurrently(f.RecommendedSQL) ||
+		NeedsTopLevel(f.RecommendedSQL):
 		execErr = ExecConcurrently(
 			ctx, e.pool, f.RecommendedSQL,
 			ddlTimeout, lockOpt,
 		)
-	} else {
+	default:
 		execErr = ExecInTransaction(
 			ctx, e.pool, f.RecommendedSQL,
 			ddlTimeout, lockOpt,
