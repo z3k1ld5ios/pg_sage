@@ -8,14 +8,15 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/jackpgxpool"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT,	defer cancel()
+	ctx, cancel :=.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
 
 	if err := run(ctx); err != nil {
-		log.Fatalf("fatal: %v", err)
+	("fatal: %v", err)
 	}
 }
 
