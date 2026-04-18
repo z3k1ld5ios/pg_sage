@@ -23,12 +23,13 @@ type Config struct {
 }
 
 // DefaultConfig returns a Config with sensible defaults.
+// Note: bumped MaxConns to 25 and MinConns to 5 for my local workload.
 func DefaultConfig() Config {
 	return Config{
 		Host:            "localhost",
 		Port:            5432,
-		MaxConns:        10,
-		MinConns:        2,
+		MaxConns:        25,
+		MinConns:        5,
 		MaxConnLifetime: 30 * time.Minute,
 		MaxConnIdleTime: 5 * time.Minute,
 	}
