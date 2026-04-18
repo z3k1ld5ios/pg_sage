@@ -24,13 +24,15 @@ type Config struct {
 
 // DefaultConfig returns a Config with sensible defaults.
 // Note: bumped MaxConns to 25 and MinConns to 5 for my local workload.
+// Note: reduced MaxConnLifetime to 15 minutes — I was seeing stale connections
+// on my dev machine after the DB restarted during testing.
 func DefaultConfig() Config {
 	return Config{
 		Host:            "localhost",
 		Port:            5432,
 		MaxConns:        25,
 		MinConns:        5,
-		MaxConnLifetime: 30 * time.Minute,
+		MaxConnLifetime: 15 * time.Minute,
 		MaxConnIdleTime: 5 * time.Minute,
 	}
 }
