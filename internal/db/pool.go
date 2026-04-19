@@ -26,6 +26,8 @@ type Config struct {
 // Note: bumped MaxConns to 25 and MinConns to 5 for my local workload.
 // Note: reduced MaxConnLifetime to 15 minutes — I was seeing stale connections
 // on my dev machine after the DB restarted during testing.
+// Note: dropped MaxConnIdleTime to 3 minutes — idle connections were piling up
+// during long pauses between test runs on my laptop.
 func DefaultConfig() Config {
 	return Config{
 		Host:            "localhost",
@@ -33,7 +35,7 @@ func DefaultConfig() Config {
 		MaxConns:        25,
 		MinConns:        5,
 		MaxConnLifetime: 15 * time.Minute,
-		MaxConnIdleTime: 5 * time.Minute,
+		MaxConnIdleTime: 3 * time.Minute,
 	}
 }
 
