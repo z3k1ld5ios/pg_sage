@@ -12,11 +12,11 @@ import (
 )
 
 func main() {
-	ctx, cancel := signal.Notifyall.SIGINT, syscall.SIGTERM)
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM)
 	defer cancel()
 
 	if err := run(ctx); err != nil {
-		log.Fatalf( err)
+		log.Fatalf("%v", err)
 	}
 }
 
