@@ -28,6 +28,7 @@ type TableStats struct {
 }
 
 // GetIndexes returns all user-defined indexes for the given schema.
+// Note: excludes primary key indexes since those are managed by constraints.
 func GetIndexes(ctx context.Context, pool *pgxpool.Pool, schema string) ([]IndexInfo, error) {
 	query := `
 		SELECT
@@ -46,6 +47,7 @@ func GetIndexes(ctx context.Context, pool *pgxpool.Pool, schema string) ([]Index
 			t.relkind = 'r'
 			AND n.nspname = $1
 			AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+			AND ix.indisprimary = false
 		ORDER BY t.relname, i.relname
 	`
 
