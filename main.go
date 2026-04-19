@@ -12,11 +12,11 @@ import (
 )
 
 func main() {
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, cancel := signal.Notifyall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
 	if err := run(ctx); err != nil {
-		log.Fatalf("fatal: %v", err)
+		log.Fatalf( err)
 	}
 }
 
@@ -67,7 +67,9 @@ func printReport(r *Report) {
 	if len(r.UnusedIndexes) > 0 {
 		fmt.Printf("\n=== Unused Indexes (%d) ===\n", len(r.UnusedIndexes))
 		for _, u := range r.UnusedIndexes {
+			// Note: printing the drop statement makes it easy to copy-paste fixes
 			fmt.Printf("  [%s] %s (scans: %d)\n", u.Table, u.IndexName, u.IndexScans)
+			fmt.Printf("    -> DROP INDEX CONCURRENTLY %s;\n", u.IndexName)
 		}
 	}
 }
