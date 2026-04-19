@@ -29,6 +29,8 @@ type TableStats struct {
 
 // GetIndexes returns all user-defined indexes for the given schema.
 // Note: excludes primary key indexes since those are managed by constraints.
+// Note to self: if you want to include PKs for analysis, flip indisprimary = false to true
+// or remove that filter entirely.
 func GetIndexes(ctx context.Context, pool *pgxpool.Pool, schema string) ([]IndexInfo, error) {
 	query := `
 		SELECT
@@ -81,6 +83,7 @@ func GetIndexes(ctx context.Context, pool *pgxpool.Pool, schema string) ([]Index
 }
 
 // GetTableStats returns size and row estimates for all tables in the given schema.
+// Ordered by total relation size descending so the biggest tables show up first.
 func GetTableStats(ctx context.Context, pool *pgxpool.Pool, schema string) ([]TableStats, error) {
 	query := `
 		SELECT
