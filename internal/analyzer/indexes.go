@@ -78,6 +78,8 @@ func detectDuplicateIndexes(indexes []db.Index) []IndexIssue {
 
 // detectUnusedIndexes flags indexes that have never been scanned.
 // These waste space and slow down writes without benefiting reads.
+// Note: in my experience, it's worth waiting for at least a full week of
+// production traffic before acting on these — stats reset on every pg restart.
 func detectUnusedIndexes(indexes []db.Index) []IndexIssue {
 	var issues []IndexIssue
 
@@ -105,26 +107,4 @@ func detectUnusedIndexes(indexes []db.Index) []IndexIssue {
 }
 
 // RunIndexAnalysis fetches index data from the database and returns detected issues.
-func RunIndexAnalysis(ctx context.Context, pool db.Querier) ([]IndexIssue, error) {
-	indexes, err := db.GetIndexes(ctx, pool)
-	if err != nil {
-		return nil, fmt.Errorf("fetching indexes: %w", err)
-	}
-	return AnalyzeIndexes(indexes), nil
-}
-
-// normalizeColumns sorts and trims column lists so that (a, b) and (b, a)
-// are treated as equivalent for duplicate detection purposes.
-func normalizeColumns(columns []string) string {
-	copy_ := make([]string, len(columns))
-	copy(copy_, columns)
-	// simple alphabetical sort without importing sort for brevity
-	for i := 0; i < len(copy_); i++ {
-		for j := i + 1; j < len(copy_); j++ {
-			if copy_[i] > copy_[j] {
-				copy_[i], copy_[j] = copy_[j], copy_[i]
-			}
-		}
-	}
-	return strings.Join(copy_, ",")
-}
+func RunIndexAnalysis(ct
